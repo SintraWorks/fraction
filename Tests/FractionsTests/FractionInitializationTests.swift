@@ -156,11 +156,40 @@ class FractionInitializationTests: XCTestCase {
         let decimalPlacesRoundingUp: Fraction = 0.123456789
         XCTAssertTrue(decimalPlacesRoundingUp.numerator == 247, "Literal 0.123456789 initialized fraction should have numerator 247, got \(decimalPlacesRoundingUp.numerator)")
         XCTAssertTrue(decimalPlacesRoundingUp.denominator == 2000, "Literal 0.123456789 initialized fraction should have denominator 2000, got \(decimalPlacesRoundingUp.denominator)")
-        
-        Fraction.significantFloatingPointDigits = 2
-        let zero2Digits: Fraction = 0.0
-        XCTAssertTrue(zero2Digits.numerator == 0, "Literal 0.0 initialized fraction should have numerator 0, got \(zero2Digits.numerator)")
-        XCTAssertTrue(zero2Digits.denominator == 1, "Literal 0.0 initialized fraction should have denominator 1, got \(zero2Digits.denominator)")
-        Fraction.significantFloatingPointDigits = 4 // Setting back to default, to avoid surprises in ensuing tests.
+    }
+
+    func testInitFromFloatWithExplicitSignificantDigits() {
+        let value = 0.123456789
+
+        let twoDigits = Fraction(float: value, significantDigits: 2)
+        XCTAssertEqual(twoDigits, Fraction(verifiedNumerator: 3, verifiedDenominator: 25), "0.123456789 at 2 digits should be 3/25, got \(twoDigits)")
+
+        let fourDigits = Fraction(float: value, significantDigits: 4)
+        XCTAssertEqual(fourDigits, Fraction(verifiedNumerator: 247, verifiedDenominator: 2000), "0.123456789 at 4 digits should be 247/2000, got \(fourDigits)")
+
+        let sixDigits = Fraction(float: value, significantDigits: 6)
+        XCTAssertEqual(sixDigits, Fraction(verifiedNumerator: 123457, verifiedDenominator: 1000000), "0.123456789 at 6 digits should be 123457/1000000, got \(sixDigits)")
+
+        // 0 digits rounds to the nearest whole number.
+        XCTAssertEqual(Fraction(float: value, significantDigits: 0), Fraction.zero, "0.123456789 at 0 digits should be 0/1")
+        XCTAssertEqual(Fraction(float: 0.5, significantDigits: 0), Fraction.one, "0.5 at 0 digits should round to 1/1")
+    }
+
+    // Omitting significantDigits must behave exactly as passing the default.
+    func testInitFromFloatDefaultsToDefaultSignificantDigits() {
+        XCTAssertEqual(Fraction.defaultSignificantFloatingPointDigits, 4, "The documented default is 4")
+
+        for value in [0.123456789, 0.5, 3.9, -0.5, -3.9, 0.0] {
+            let implicitDigits = Fraction(float: value)
+            let explicitDigits = Fraction(float: value, significantDigits: Fraction.defaultSignificantFloatingPointDigits)
+            XCTAssertEqual(implicitDigits, explicitDigits, "Converting \(value) with and without an explicit precision should agree, got \(implicitDigits) and \(explicitDigits)")
+        }
+    }
+
+    // Values with a whole part and a sign go through the same path.
+    func testInitFromFloatWithWholePartAndSign() {
+        XCTAssertEqual(Fraction(float: 3.9), Fraction(verifiedNumerator: 39, verifiedDenominator: 10), "3.9 should be 39/10, got \(Fraction(float: 3.9))")
+        XCTAssertEqual(Fraction(float: -0.5), Fraction(verifiedNumerator: -1, verifiedDenominator: 2), "-0.5 should be -1/2, got \(Fraction(float: -0.5))")
+        XCTAssertEqual(Fraction(float: -3.9), Fraction(verifiedNumerator: -39, verifiedDenominator: 10), "-3.9 should be -39/10, got \(Fraction(float: -3.9))")
     }
 }

@@ -65,8 +65,13 @@ import math_h
     - Warning: Fraction will trap if any operation results in an overflow or underflow.
  */
 public struct Fraction: Codable, Sendable {
-    /// The number of fraction digits to consider when creating a fraction from a floating point value.
-    static var significantFloatingPointDigits = 4
+    /// The number of fraction digits considered when creating a fraction from a floating point
+    /// value, unless a call supplies its own.
+    ///
+    /// Pass `significantDigits` to `init(float:significantDigits:)` to convert at a different
+    /// precision. That is a per-call choice rather than a process-wide setting, so it is safe to
+    /// use from any concurrency domain and cannot change the meaning of a conversion elsewhere.
+    public static let defaultSignificantFloatingPointDigits = 4
 
     public enum FractionError: Error {
         case illegalNumerator
@@ -123,7 +128,7 @@ public struct Fraction: Codable, Sendable {
             let value = try container.decode(Double.self)
             let multiplier: Int = Int(value)
             let operand = value - FloatLiteralType(multiplier)
-            let divisor = pow(10.0, Double(Self.significantFloatingPointDigits))
+            let divisor = pow(10.0, Double(Self.defaultSignificantFloatingPointDigits))
             let fractionInt = Int((operand * divisor).rounded())
             numerator = fractionInt + (Int(divisor) * multiplier)
             denominator = Int(divisor)
@@ -148,11 +153,24 @@ public struct Fraction: Codable, Sendable {
         self.denominator = verifiedDenominator
     }
 
-    /// Initialize a faction from a float literal
-    public init(float: FloatLiteralType) {
+    /// Initialize a fraction from a floating point value.
+    /// - Parameter float: The value to convert.
+    /// - Parameter significantDigits: How many fraction digits of `float` to preserve
+    ///   (valid range: 0 ... 18). Defaults to `defaultSignificantFloatingPointDigits`.
+    ///
+    /// The conversion is exact only for values whose fractional part terminates within
+    /// `significantDigits` decimal places; anything longer is rounded. `0.5` converts to `1/2`,
+    /// while at the default precision `0.123456789` converts to `247/2000`.
+    ///
+    /// - Note: The upper bound of 18 is the largest power of ten that fits in an `Int`; a higher
+    ///   value would overflow while computing the denominator.
+    public init(float: FloatLiteralType, significantDigits: Int = Fraction.defaultSignificantFloatingPointDigits) {
+        precondition(significantDigits >= 0, "significantDigits may not be negative, got \(significantDigits)")
+        precondition(significantDigits <= 18, "significantDigits may not exceed 18, as 10 to the power of 19 overflows Int, got \(significantDigits)")
+
         let multiplier: Int = Int(float)
         let operand = float - FloatLiteralType(multiplier)
-        let divisor = pow(10.0, Double(Self.significantFloatingPointDigits))
+        let divisor = pow(10.0, Double(significantDigits))
         let fractionInt = Int((operand * divisor).rounded())
         self.init(verifiedNumerator: fractionInt, verifiedDenominator: Int(divisor), wholes: multiplier)
         reduce()
