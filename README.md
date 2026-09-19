@@ -1,6 +1,6 @@
 # Fraction
 
-[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2FSintraWorks%2Ffraction%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/SintraWorks/fraction)
+[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2FSintraWorks%2Ffraction%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/SintraWorks/fraction)
 [![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2FSintraWorks%2Ffraction%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/SintraWorks/fraction)
 
 Fraction is a value type that represents the quotient of two numbers (like `1/3`), without loss of precision, and with support for basic arithmetic operations.
@@ -25,18 +25,20 @@ Fraction will trap if any operation results in an overflow or underflow.
 
 ## Using **Fractions** in your project
 
+Fractions requires **Swift 6.0** or later.
+
 To use this package in a SwiftPM project, you need to set it up as a package dependency:
 
 ```swift
-// swift-tools-version:5.9
+// swift-tools-version:6.0
 import PackageDescription
 
 let package = Package(
   name: "MyPackage",
   dependencies: [
     .package(
-      url: "https://github.com/sintraworks/fraction.git", 
-      .upToNextMinor(from: "0.9.0") // or `.upToNextMajor
+      url: "https://github.com/sintraworks/fraction.git",
+      .upToNextMinor(from: "1.1.0") // or .upToNextMajor
     )
   ],
   targets: [
@@ -49,3 +51,5 @@ let package = Package(
   ]
 )
 ```
+
+Your own package does not have to declare `swift-tools-version: 6.0`. A lower tools version works, as long as you build with a Swift 6.0 or later toolchain. Declaring 6.0 does, however, opt your own package into the Swift 6 language mode.
