@@ -980,3 +980,88 @@ extension FractionsTests {
         }
     }
 }
+
+// MARK: - Hashable
+
+extension FractionsTests {
+    // Equality compares the reduced, normalized form, so fractions that are equal but
+    // stored differently must produce the same hash value.
+    func testEqualFractionsHashEqually() {
+        let half = Fraction(verifiedNumerator: 1, verifiedDenominator: 2)
+        let twoQuarters = Fraction(verifiedNumerator: 2, verifiedDenominator: 4)
+        let fiftyHundredths = Fraction(verifiedNumerator: 50, verifiedDenominator: 100)
+
+        XCTAssertEqual(half, twoQuarters, "1/2 and 2/4 should be equal")
+        XCTAssertEqual(half, fiftyHundredths, "1/2 and 50/100 should be equal")
+        XCTAssertEqual(half.hashValue, twoQuarters.hashValue, "Equal fractions must hash equally, got \(half.hashValue) and \(twoQuarters.hashValue)")
+        XCTAssertEqual(half.hashValue, fiftyHundredths.hashValue, "Equal fractions must hash equally, got \(half.hashValue) and \(fiftyHundredths.hashValue)")
+    }
+
+    // Negative fractions are canonicalized before hashing, so the three spellings of
+    // a negative half must all hash alike, and -1/-2 must hash as +1/2.
+    func testNegativeFractionsHashEqually() {
+        let negativeNumerator = Fraction(verifiedNumerator: -1, verifiedDenominator: 2)
+        let negativeDenominator = Fraction(verifiedNumerator: 1, verifiedDenominator: -2)
+        let negativeBoth = Fraction(verifiedNumerator: -1, verifiedDenominator: -2)
+        let positiveHalf = Fraction(verifiedNumerator: 1, verifiedDenominator: 2)
+
+        XCTAssertEqual(negativeNumerator.hashValue, negativeDenominator.hashValue, "-1/2 and 1/-2 must hash equally")
+        XCTAssertEqual(negativeBoth.hashValue, positiveHalf.hashValue, "-1/-2 and 1/2 must hash equally")
+        XCTAssertNotEqual(negativeNumerator.hashValue, positiveHalf.hashValue, "-1/2 and 1/2 should not hash equally")
+    }
+
+    // Zero has several spellings too, and they must all collapse.
+    func testZeroHashesConsistently() {
+        let zeroOverOne = Fraction(verifiedNumerator: 0, verifiedDenominator: 1)
+        let zeroOverFive = Fraction(verifiedNumerator: 0, verifiedDenominator: 5)
+        let zeroOverNegativeFive = Fraction(verifiedNumerator: 0, verifiedDenominator: -5)
+
+        XCTAssertEqual(zeroOverOne.hashValue, zeroOverFive.hashValue, "0/1 and 0/5 must hash equally")
+        XCTAssertEqual(zeroOverOne.hashValue, zeroOverNegativeFive.hashValue, "0/1 and 0/-5 must hash equally")
+    }
+
+    // The reason the conformance exists: a Fraction has to work as a dictionary key,
+    // regardless of the arithmetic path by which it was arrived at.
+    func testFractionAsDictionaryKey() {
+        let oneTwelfth = Fraction(verifiedNumerator: 1, verifiedDenominator: 12)
+        let summed = oneTwelfth + oneTwelfth + oneTwelfth
+        let literal = Fraction(verifiedNumerator: 1, verifiedDenominator: 4)
+        let unreduced = Fraction(verifiedNumerator: 25, verifiedDenominator: 100)
+
+        var dictionary: [Fraction: String] = [:]
+        dictionary[summed] = "summed"
+        dictionary[unreduced] = "unreduced"
+        dictionary[literal] = "literal"
+
+        XCTAssertEqual(dictionary.count, 1, "All three spellings of 1/4 should be the same key, got \(dictionary.count) entries")
+        XCTAssertEqual(dictionary[literal], "literal", "Lookup by an equal fraction should find the stored value")
+
+        let set: Set<Fraction> = [summed, unreduced, literal]
+        XCTAssertEqual(set.count, 1, "All three spellings of 1/4 should be one set member, got \(set.count)")
+    }
+}
+
+// MARK: - Sendable
+
+extension FractionsTests {
+    // A compile-time assertion: this does not build unless Fraction conforms to Sendable.
+    func testFractionIsSendable() {
+        func requireSendable<T: Sendable>(_ value: T) -> T { value }
+        let fraction = Fraction(verifiedNumerator: 1, verifiedDenominator: 2)
+        XCTAssertEqual(requireSendable(fraction), fraction, "Fraction should conform to Sendable")
+    }
+}
+
+// MARK: - CustomStringConvertible
+
+extension FractionsTests {
+    func testFractionDescription() {
+        let fraction = Fraction(verifiedNumerator: 1, verifiedDenominator: 2)
+        XCTAssertEqual("\(fraction)", "1/2", "Interpolation should use description, got \("\(fraction)")")
+        XCTAssertEqual(String(describing: fraction), "1/2", "String(describing:) should use description")
+
+        // description reports the stored form, not the canonical one.
+        let unreduced = Fraction(verifiedNumerator: 2, verifiedDenominator: 4)
+        XCTAssertEqual("\(unreduced)", "2/4", "description should report the stored form")
+    }
+}

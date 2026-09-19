@@ -64,7 +64,7 @@ import math_h
 
     - Warning: Fraction will trap if any operation results in an overflow or underflow.
  */
-public struct Fraction: Codable {
+public struct Fraction: Codable, Sendable {
     /// The number of fraction digits to consider when creating a fraction from a floating point value.
     static var significantFloatingPointDigits = 4
 
