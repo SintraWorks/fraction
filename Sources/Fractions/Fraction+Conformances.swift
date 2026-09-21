@@ -26,19 +26,44 @@
 // MARK: - Hashable
 
 extension Fraction: Hashable {
-    /// Hashes the fraction's canonical (reduced, normalized) form.
+    /// Hashes the fraction's canonical form: reduced to lowest terms, with the sign on the
+    /// numerator.
     ///
-    /// - Important: The hash **must** be computed on the same form that `==` compares,
-    ///   and `==` compares `reduced().normalized()`. Since initialization does not reduce,
-    ///   equal fractions may store different values: `Fraction(numerator: 2, denominator: 4)`
-    ///   equals `Fraction(numerator: 1, denominator: 2)`, but the two store `2/4` and `1/2`
-    ///   respectively. Synthesized conformance would hash those to different values and so
-    ///   break the requirement that equal values hash equally, which in turn would break
-    ///   lookup in any `Set` or `Dictionary` keyed by `Fraction`.
+    /// - Important: The hash **must** be computed on a canonical form, because `==` compares
+    ///   the rational values while initialization does not reduce. Equal fractions therefore
+    ///   store different fields: `Fraction(numerator: 2, denominator: 4)` equals
+    ///   `Fraction(numerator: 1, denominator: 2)`, but the two store `2/4` and `1/2`.
+    ///   Synthesized conformance would hash those to different values and so break the
+    ///   requirement that equal values hash equally, which in turn would break lookup in any
+    ///   `Set` or `Dictionary` keyed by `Fraction`.
+    ///
+    ///   `==` needs no canonical form of its own — it cross-multiplies, which is
+    ///   reduction-invariant — so this is the one operation of the three that still reduces.
+    ///
+    /// The canonical form is fed to the hasher as two numbers rather than assembled into a
+    /// `Fraction`, which avoids the copies `reduced().normalized()` made and keeps the
+    /// arithmetic on magnitudes, so a field holding `Int.min` does not trap.
     public func hash(into hasher: inout Hasher) {
-        let canonical = reduced().normalized()
-        hasher.combine(canonical.numerator)
-        hasher.combine(canonical.denominator)
+        let numeratorMagnitude = numerator.magnitude
+        let denominatorMagnitude = denominator.magnitude
+        let divisor = Fraction.greatestCommonDivisor(numeratorMagnitude, denominatorMagnitude)
+
+        // Only 0/0 has no canonical form, and no initializer produces it. Hash it as a constant
+        // rather than dividing by zero.
+        guard divisor != 0 else {
+            hasher.combine(0)
+            hasher.combine(0 as UInt)
+            return
+        }
+
+        let reducedNumerator = numeratorMagnitude / divisor
+        // A negative sign belongs on the numerator, and zero has no sign, so `0/5` and `0/-5`
+        // agree. Negating a magnitude of 2^63 lands on `Int.min`, which is exactly the value a
+        // canonical numerator of that size has to take, so this is always representable.
+        let isNegative = (numerator < 0) != (denominator < 0)
+        hasher.combine(isNegative ? Int(bitPattern: 0 &- reducedNumerator) : Int(bitPattern: reducedNumerator))
+        // The canonical denominator is positive by construction, so it is hashed as a magnitude.
+        hasher.combine(denominatorMagnitude / divisor)
     }
 }
 
