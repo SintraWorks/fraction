@@ -82,7 +82,12 @@ public struct Fraction: Codable, Sendable {
 
     /// The fraction's numerator (valid range: Int.min + 1 ... Int.max)
     public var numerator: Int
-    /// The fraction's denominator (valid range: Int.min + 1 ... Int.max)
+    /// The fraction's denominator (valid range: Int.min + 1 ... Int.max, excluding 0)
+    ///
+    /// - Warning: This property is writable, so a fraction can be driven outside the type's
+    ///   domain after it has been initialized. Assigning 0 is the case that matters: no
+    ///   initializer produces a zero denominator, and the results of comparing and hashing a
+    ///   fraction that has one are unspecified.
     public var denominator: Int
 
     enum CodingKeys: String, CodingKey, CaseIterable {
@@ -554,21 +559,49 @@ extension Fraction {
 }
 
 extension Fraction: Comparable {
+    /// Two fractions are equal when they denote the same rational number, however each of them
+    /// happens to be written: `1/2`, `2/4`, `50/100` and `-1/-2` are all equal.
+    ///
+    /// Cross-multiplication is reduction-invariant — `a/b == c/d` exactly when `a·d == c·b`,
+    /// whether or not either side is in lowest terms — so no fraction has to be reduced to
+    /// compare it, and the sign of `b·d` cancels, so neither has to be normalized. The products
+    /// are formed at full 128-bit width, which makes them exact and puts overflow out of reach.
+    ///
+    /// - Note: A zero denominator is outside this type's domain; no initializer produces one, and
+    ///   the result of comparing such a value is unspecified. See ``denominator``.
     public static func == (lhs: Fraction, rhs: Fraction) -> Bool {
-        let lhsRed = lhs.reduced().normalized()
-        let rhsRed = rhs.reduced().normalized()
+        let leftProduct = lhs.numerator.multipliedFullWidth(by: rhs.denominator)
+        let rightProduct = rhs.numerator.multipliedFullWidth(by: lhs.denominator)
 
-        return lhsRed.numerator == rhsRed.numerator && lhsRed.denominator == rhsRed.denominator
+        return leftProduct.high == rightProduct.high && leftProduct.low == rightProduct.low
     }
 
+    /// Orders two fractions by the rational numbers they denote, regardless of how either is
+    /// written.
+    ///
+    /// `a/b < c/d` holds exactly when `a·d < c·b` for positive `b·d`, and the inequality reverses
+    /// when `b·d` is negative. Only the *sign* of `b·d` is needed, and it is read off the two
+    /// denominators, so the product itself is never formed and nothing is negated — which is why
+    /// this handles values `normalize()` would have trapped on.
+    ///
+    /// - Note: A zero denominator is outside this type's domain; no initializer produces one, and
+    ///   the result of comparing such a value is unspecified. See ``denominator``.
     public static func < (lhs: Fraction, rhs: Fraction) -> Bool {
-        let lhsRed = lhs.reduced().normalized()
-        let rhsRed = rhs.reduced().normalized()
+        let leftProduct = lhs.numerator.multipliedFullWidth(by: rhs.denominator)
+        let rightProduct = rhs.numerator.multipliedFullWidth(by: lhs.denominator)
 
-        let lhsNominatorProduct = lhsRed.numerator * rhsRed.denominator
-        let rhsNominatorProduct = rhsRed.numerator * lhsRed.denominator
-
-        return lhsNominatorProduct < rhsNominatorProduct
+        // `multipliedFullWidth(by:)` yields `high · 2^64 + low` with `low` unsigned, which is the
+        // two's complement 128-bit product. Such values order lexicographically: signed on the
+        // high half, unsigned on the low half.
+        if (lhs.denominator < 0) != (rhs.denominator < 0) {
+            return rightProduct.high != leftProduct.high
+                ? rightProduct.high < leftProduct.high
+                : rightProduct.low < leftProduct.low
+        } else {
+            return leftProduct.high != rightProduct.high
+                ? leftProduct.high < rightProduct.high
+                : leftProduct.low < rightProduct.low
+        }
     }
 }
 

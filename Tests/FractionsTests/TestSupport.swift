@@ -39,3 +39,14 @@ extension SplitMix64 {
                         verifiedDenominator: negativeDenominator ? -denominatorMagnitude : denominatorMagnitude)
     }
 }
+
+/// Builds a fraction with fields no initializer would accept.
+///
+/// `numerator` and `denominator` are writable, so out-of-domain values are reachable even though
+/// nothing constructs them. Tests that pin down what happens there need a way to get there.
+func unchecked(_ numerator: Int, _ denominator: Int) -> Fraction {
+    var fraction = Fraction(verifiedNumerator: 1, verifiedDenominator: 1)
+    fraction.numerator = numerator
+    fraction.denominator = denominator
+    return fraction
+}

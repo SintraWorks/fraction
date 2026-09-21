@@ -123,6 +123,41 @@ class FractionComparisonDifferentialTests: XCTestCase {
         }
     }
 
+    /// The same invariance, driven all the way to the top of `Int`.
+    ///
+    /// This could not be written against the 1.1.0 implementation: the scaled fractions here have
+    /// cross products far beyond `Int.max`, and reducing them first does not help, because the
+    /// scale is chosen so that the *other* operand shares no factor with it.
+    func testComparisonIsInvariantUnderScalingAtFullRange() {
+        let seed: UInt64 = 0x5EED_0000_0000_0006
+        var generator = SplitMix64(seed: seed)
+
+        for _ in 0 ..< 50_000 {
+            let original = generator.nextFraction(bound: 4096)
+            let other = generator.nextFraction(bound: 4096)
+
+            // Scale by as much as `Int` will hold, which is where the old cross products blew up.
+            let largestField = Swift.max(original.numerator.magnitude, original.denominator.magnitude)
+            let largestScale = Int(UInt(Int.max) / Swift.max(largestField, 1))
+            guard largestScale >= 2 else { continue }
+
+            let magnitude = Int.random(in: (largestScale / 2) ... largestScale, using: &generator)
+            let scale = Bool.random(using: &generator) ? -magnitude : magnitude
+
+            let scaledNumerator = original.numerator * scale
+            let scaledDenominator = original.denominator * scale
+            // Int.min is out of the type's range; skip the one scale that could land on it.
+            guard scaledNumerator > Int.min, scaledDenominator > Int.min else { continue }
+
+            let scaled = Fraction(verifiedNumerator: scaledNumerator, verifiedDenominator: scaledDenominator)
+
+            XCTAssertEqual(scaled, original, "\(scaled) is \(original) scaled by \(scale) and must equal it (seed \(seed))")
+            XCTAssertEqual(scaled < other, original < other, "Scaling \(original) by \(scale) changed its order against \(other) (seed \(seed))")
+            XCTAssertEqual(other < scaled, other < original, "Scaling \(original) by \(scale) changed \(other)'s order against it (seed \(seed))")
+            XCTAssertEqual(scaled.hashValue, original.hashValue, "\(scaled) and \(original) are equal and must hash equally (seed \(seed))")
+        }
+    }
+
     /// `sort()` requires a strict total order. Nothing tested that before.
     func testOrderingIsAStrictTotalOrder() {
         let seed: UInt64 = 0x5EED_0000_0000_0003
@@ -148,5 +183,77 @@ class FractionComparisonDifferentialTests: XCTestCase {
                 XCTAssertEqual(a, c, "\(a) == \(b) == \(c) but not \(a) == \(c) (seed \(seed))")
             }
         }
+    }
+
+    // MARK: - Magnitudes that used to overflow
+
+    /// In 1.1.0 these trapped: both operands are already in lowest terms, so reducing them saved
+    /// nothing and the cross product overflowed `Int`.
+    func testLargeCrossProductsCompareWithoutOverflowing() {
+        let halfOfMax = Fraction(verifiedNumerator: Int.max, verifiedDenominator: 2)
+        let max = Fraction(verifiedNumerator: Int.max, verifiedDenominator: 1)
+
+        XCTAssertTrue(halfOfMax < max, "\(halfOfMax) should be less than \(max)")
+        XCTAssertFalse(max < halfOfMax, "\(max) should not be less than \(halfOfMax)")
+        XCTAssertNotEqual(halfOfMax, max, "\(halfOfMax) and \(max) are different values")
+
+        let thirdOfMax = Fraction(verifiedNumerator: Int.max, verifiedDenominator: 3)
+        let fifth = Fraction(verifiedNumerator: 1, verifiedDenominator: 5)
+        XCTAssertTrue(fifth < thirdOfMax, "\(fifth) should be less than \(thirdOfMax)")
+
+        // Equal, but only visible once the products are carried at full width.
+        let large = Fraction(verifiedNumerator: Int.max, verifiedDenominator: Int.max - 1)
+        let sameLarge = Fraction(verifiedNumerator: Int.max, verifiedDenominator: Int.max - 1)
+        XCTAssertEqual(large, sameLarge, "\(large) should equal itself")
+
+        // Extreme operands in both directions: the products here are near ±2^126.
+        let mostNegative = Fraction(verifiedNumerator: Int.min + 1, verifiedDenominator: 1)
+        let mostPositive = Fraction(verifiedNumerator: Int.max, verifiedDenominator: 1)
+        XCTAssertTrue(mostNegative < mostPositive, "\(mostNegative) should be less than \(mostPositive)")
+        XCTAssertFalse(mostPositive < mostNegative, "\(mostPositive) should not be less than \(mostNegative)")
+    }
+
+    /// Ordering large values must still agree with ordering their reduced forms — the property
+    /// that makes dropping the reduction safe, checked where the reduction used to be needed.
+    func testLargeValuesOrderAsTheirReducedFormsDo() {
+        let big = Int.max / 2
+        let half = Fraction(verifiedNumerator: big, verifiedDenominator: 2)
+        let quarter = Fraction(verifiedNumerator: big, verifiedDenominator: 4)
+
+        XCTAssertTrue(quarter < half, "\(quarter) should be less than \(half)")
+        XCTAssertEqual(Fraction(verifiedNumerator: big, verifiedDenominator: 2),
+                       Fraction(verifiedNumerator: big / 3 * 3, verifiedDenominator: 2),
+                       "Scaling the numerator by a factor it divides evenly must not change the value")
+    }
+
+    // MARK: - Fields outside the type's range
+
+    /// `Int.min` is out of range, but the stored properties are writable, so a fraction can still
+    /// be driven there. Comparison must cope; in 1.1.0 it trapped on the negation inside
+    /// `reduced()` before it got as far as comparing anything.
+    func testIntMinFieldsCompareWithoutTrapping() {
+        let intMinNumerator = unchecked(Int.min, 1)
+
+        XCTAssertEqual(intMinNumerator, intMinNumerator, "A fraction must equal itself")
+        XCTAssertTrue(intMinNumerator < Fraction.zero, "\(intMinNumerator) should be less than 0/1")
+        XCTAssertFalse(Fraction.zero < intMinNumerator, "0/1 should not be less than \(intMinNumerator)")
+
+        // Int.min/1 and Int.min/-1 are negatives of one another, not equal.
+        let intMinDenominator = unchecked(Int.min, -1)
+        XCTAssertNotEqual(intMinNumerator, intMinDenominator, "\(intMinNumerator) and \(intMinDenominator) differ in sign")
+        XCTAssertTrue(intMinNumerator < intMinDenominator, "\(intMinNumerator) should be less than \(intMinDenominator)")
+
+        // Equal values at this magnitude must still compare equal.
+        XCTAssertEqual(unchecked(Int.min, 2), unchecked(Int.min / 2, 1),
+                       "Int.min/2 should equal \(Int.min / 2)/1")
+    }
+
+    /// A zero denominator is documented as unspecified, not as fatal. The requirement is only
+    /// that comparing one returns rather than trapping.
+    func testZeroDenominatorsDoNotTrap() {
+        _ = unchecked(0, 0) == Fraction.one
+        _ = unchecked(0, 0) < Fraction.one
+        _ = unchecked(5, 0) == unchecked(3, 0)
+        _ = unchecked(5, 0) < unchecked(3, 0)
     }
 }
