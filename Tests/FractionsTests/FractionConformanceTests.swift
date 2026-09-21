@@ -110,4 +110,42 @@ class FractionConformanceTests: XCTestCase {
         let fraction = Fraction(verifiedNumerator: 1, verifiedDenominator: 2)
         XCTAssertEqual(requireSendable(fraction), fraction, "Fraction should conform to Sendable")
     }
+
+    // Equal values must hash equally. Checked against equality itself over a random corpus,
+    // rather than against a list of hand-picked spellings.
+    func testEqualValuesHashEqually() {
+        let seed: UInt64 = 0x5EED_0000_0000_0004
+        var generator = SplitMix64(seed: seed)
+        var equalPairsSeen = 0
+
+        for _ in 0 ..< 100_000 {
+            let lhs = generator.nextFraction(bound: 12)
+            let rhs = generator.nextFraction(bound: 12)
+            guard lhs == rhs else { continue }
+
+            equalPairsSeen += 1
+            XCTAssertEqual(lhs.hashValue, rhs.hashValue, "\(lhs) == \(rhs) but they hash differently (seed \(seed))")
+        }
+
+        // Guard against the test passing silently because nothing compared equal.
+        XCTAssertGreaterThan(equalPairsSeen, 1000, "The corpus produced only \(equalPairsSeen) equal pairs, too few to be meaningful")
+    }
+
+    // Hashing canonicalizes, so it is the one of the three operations that still reduces — and
+    // so the one that could still trap on a field holding Int.min. It must not.
+    func testOutOfRangeFieldsHashWithoutTrapping() {
+        XCTAssertEqual(unchecked(Int.min, 2).hashValue, unchecked(Int.min / 2, 1).hashValue,
+                       "Int.min/2 and \(Int.min / 2)/1 are equal and must hash equally")
+        // Int.min/1 and Int.min/-1 are not equal, but they do hash alike: their canonical
+        // numerator has magnitude 2^63, which is its own negation, so the sign is lost. Hashable
+        // permits unequal values to collide — it only requires that equal ones agree — and a
+        // numerator can only reach that magnitude by being written to directly, since no legal
+        // numerator exceeds Int.max.
+        XCTAssertNotEqual(unchecked(Int.min, 1), unchecked(Int.min, -1),
+                          "Int.min/1 and Int.min/-1 differ in sign and are not equal")
+
+        // A zero denominator is documented as unspecified; the requirement is only that it returns.
+        _ = unchecked(0, 0).hashValue
+        _ = unchecked(5, 0).hashValue
+    }
 }

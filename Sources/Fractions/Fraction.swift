@@ -82,7 +82,12 @@ public struct Fraction: Codable, Sendable {
 
     /// The fraction's numerator (valid range: Int.min + 1 ... Int.max)
     public var numerator: Int
-    /// The fraction's denominator (valid range: Int.min + 1 ... Int.max)
+    /// The fraction's denominator (valid range: Int.min + 1 ... Int.max, excluding 0)
+    ///
+    /// - Warning: This property is writable, so a fraction can be driven outside the type's
+    ///   domain after it has been initialized. Assigning 0 is the case that matters: no
+    ///   initializer produces a zero denominator, and the results of comparing and hashing a
+    ///   fraction that has one are unspecified.
     public var denominator: Int
 
     enum CodingKeys: String, CodingKey, CaseIterable {
@@ -96,11 +101,20 @@ public struct Fraction: Codable, Sendable {
     ///
     /// The lower end of the valid range for the parameters is Int.min + 1, because you cannot flip Int.min to to its positive counterpart –it results in an overflow–
     /// which may happen in the `reduce()` function.
+    ///
+    /// `wholes` is folded into the numerator, so the initializer fails if `denominator * wholes`
+    /// overflows, if adding it to `numerator` overflows, or if the result would be `Int.min` —
+    /// all of which are as illegal as passing `Int.min` for the numerator directly.
     public init?(numerator: Int, denominator: Int, wholes: Int = 0) {
         guard denominator != 0 else { return nil }
         guard numerator > Int.min, denominator > Int.min else { return nil }
 
-        self.numerator = numerator + (denominator * wholes)
+        let (offset, offsetOverflowed) = denominator.multipliedReportingOverflow(by: wholes)
+        guard !offsetOverflowed else { return nil }
+        let (combinedNumerator, sumOverflowed) = numerator.addingReportingOverflow(offset)
+        guard !sumOverflowed, combinedNumerator > Int.min else { return nil }
+
+        self.numerator = combinedNumerator
         self.denominator = denominator
     }
 
@@ -144,12 +158,21 @@ public struct Fraction: Codable, Sendable {
     /// It can be very inconvenient to always have to unwrap the initializer. Hence, if you think you know what you are doing, you can use this guaranteed initializer.
     /// Of course, you need to ensure you only pass in valid values. E.g. passing in a 0 for the denominator is a very bad idea. Also, passing Int.max for `wholes`
     /// and a positive fraction with it will result in an arithmetic overflow.
+    ///
+    /// `wholes` is folded into the numerator, and is checked on the same terms as the numerator
+    /// itself: folding it in may neither overflow nor land on `Int.min`.
     public init(verifiedNumerator: Int, verifiedDenominator: Int = 1, wholes: Int = 0) {
         precondition(verifiedNumerator > Int.min, "Illegal numerator value: Int.min is not allowed")
         precondition(verifiedDenominator > Int.min, "Illegal denominator value: Int.min is not allowed")
         precondition(verifiedDenominator != 0, "0 is an illegal value for the denominator")
-        
-        self.numerator = verifiedNumerator + (verifiedDenominator * wholes)
+
+        let (offset, offsetOverflowed) = verifiedDenominator.multipliedReportingOverflow(by: wholes)
+        precondition(!offsetOverflowed, "Illegal number of wholes: \(wholes) times a denominator of \(verifiedDenominator) overflows")
+        let (combinedNumerator, sumOverflowed) = verifiedNumerator.addingReportingOverflow(offset)
+        precondition(!sumOverflowed, "Illegal number of wholes: folding \(wholes) wholes into a numerator of \(verifiedNumerator) overflows")
+        precondition(combinedNumerator > Int.min, "Illegal numerator value: folding \(wholes) wholes into \(verifiedNumerator) yields Int.min, which is not allowed")
+
+        self.numerator = combinedNumerator
         self.denominator = verifiedDenominator
     }
 
@@ -176,21 +199,44 @@ public struct Fraction: Codable, Sendable {
         reduce()
     }
 
-    /// Reduce a fraction to its Greatest Common Denominator
-    public mutating func reduce() {
-        let (absNumerator, numeratorSign) = numerator < 0 ? (-numerator, -1) : (numerator, 1)
-        let (absDenominator, denominatorSign) = denominator < 0 ? (-denominator, -1) : (denominator, 1)
+    /// Euclid's algorithm, over magnitudes.
+    ///
+    /// Working in `UInt` rather than `Int` is what lets the callers avoid negating, and so avoid
+    /// trapping on `Int.min`. Returns 0 only when both arguments are 0.
+    static func greatestCommonDivisor(_ a: UInt, _ b: UInt) -> UInt {
+        var u = a
+        var v = b
 
-        var u = absNumerator
-        var v = absDenominator
-
-        // Euclid's solution to finding the Greatest Common Denominator
-        while (v != 0) {
+        while v != 0 {
             (v, u) = (u % v, v)
         }
 
-        numerator = absNumerator / u * numeratorSign
-        denominator = absDenominator / u * denominatorSign
+        return u
+    }
+
+    /// Reduce a fraction to its Greatest Common Denominator.
+    ///
+    /// The sign stays where it was written: `3/-15` reduces to `1/-5`, and `-2/-4` to `-1/-2`.
+    /// Use `normalize()` to move a negative sign onto the numerator.
+    ///
+    /// The reduction is carried out on the magnitudes, so a field holding `Int.min` reduces
+    /// correctly rather than trapping on a negation it cannot represent, and `0/0` — which no
+    /// initializer produces — is left alone rather than dividing by zero.
+    public mutating func reduce() {
+        let numeratorMagnitude = numerator.magnitude
+        let denominatorMagnitude = denominator.magnitude
+
+        let divisor = Self.greatestCommonDivisor(numeratorMagnitude, denominatorMagnitude)
+        guard divisor != 0 else { return }
+
+        let reducedNumerator = numeratorMagnitude / divisor
+        let reducedDenominator = denominatorMagnitude / divisor
+
+        // A magnitude of 2^63 can only have come from `Int.min`, which is negative and so takes
+        // the negating branch back to `Int.min` exactly. Every other magnitude is at most
+        // `Int.max`. So neither branch can produce a value `Int` cannot represent.
+        numerator = numerator < 0 ? Int(bitPattern: 0 &- reducedNumerator) : Int(bitPattern: reducedNumerator)
+        denominator = denominator < 0 ? Int(bitPattern: 0 &- reducedDenominator) : Int(bitPattern: reducedDenominator)
     }
 
     /// Returns a new fraction representing the reduction of the receiver to its Greatest Common Denominator
@@ -554,21 +600,49 @@ extension Fraction {
 }
 
 extension Fraction: Comparable {
+    /// Two fractions are equal when they denote the same rational number, however each of them
+    /// happens to be written: `1/2`, `2/4`, `50/100` and `-1/-2` are all equal.
+    ///
+    /// Cross-multiplication is reduction-invariant — `a/b == c/d` exactly when `a·d == c·b`,
+    /// whether or not either side is in lowest terms — so no fraction has to be reduced to
+    /// compare it, and the sign of `b·d` cancels, so neither has to be normalized. The products
+    /// are formed at full 128-bit width, which makes them exact and puts overflow out of reach.
+    ///
+    /// - Note: A zero denominator is outside this type's domain; no initializer produces one, and
+    ///   the result of comparing such a value is unspecified. See ``denominator``.
     public static func == (lhs: Fraction, rhs: Fraction) -> Bool {
-        let lhsRed = lhs.reduced().normalized()
-        let rhsRed = rhs.reduced().normalized()
+        let leftProduct = lhs.numerator.multipliedFullWidth(by: rhs.denominator)
+        let rightProduct = rhs.numerator.multipliedFullWidth(by: lhs.denominator)
 
-        return lhsRed.numerator == rhsRed.numerator && lhsRed.denominator == rhsRed.denominator
+        return leftProduct.high == rightProduct.high && leftProduct.low == rightProduct.low
     }
 
+    /// Orders two fractions by the rational numbers they denote, regardless of how either is
+    /// written.
+    ///
+    /// `a/b < c/d` holds exactly when `a·d < c·b` for positive `b·d`, and the inequality reverses
+    /// when `b·d` is negative. Only the *sign* of `b·d` is needed, and it is read off the two
+    /// denominators, so the product itself is never formed and nothing is negated — which is why
+    /// this handles values `normalize()` would have trapped on.
+    ///
+    /// - Note: A zero denominator is outside this type's domain; no initializer produces one, and
+    ///   the result of comparing such a value is unspecified. See ``denominator``.
     public static func < (lhs: Fraction, rhs: Fraction) -> Bool {
-        let lhsRed = lhs.reduced().normalized()
-        let rhsRed = rhs.reduced().normalized()
+        let leftProduct = lhs.numerator.multipliedFullWidth(by: rhs.denominator)
+        let rightProduct = rhs.numerator.multipliedFullWidth(by: lhs.denominator)
 
-        let lhsNominatorProduct = lhsRed.numerator * rhsRed.denominator
-        let rhsNominatorProduct = rhsRed.numerator * lhsRed.denominator
-
-        return lhsNominatorProduct < rhsNominatorProduct
+        // `multipliedFullWidth(by:)` yields `high · 2^64 + low` with `low` unsigned, which is the
+        // two's complement 128-bit product. Such values order lexicographically: signed on the
+        // high half, unsigned on the low half.
+        if (lhs.denominator < 0) != (rhs.denominator < 0) {
+            return rightProduct.high != leftProduct.high
+                ? rightProduct.high < leftProduct.high
+                : rightProduct.low < leftProduct.low
+        } else {
+            return leftProduct.high != rightProduct.high
+                ? leftProduct.high < rightProduct.high
+                : leftProduct.low < rightProduct.low
+        }
     }
 }
 

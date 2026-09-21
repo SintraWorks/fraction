@@ -192,4 +192,30 @@ class FractionInitializationTests: XCTestCase {
         XCTAssertEqual(Fraction(float: -0.5), Fraction(verifiedNumerator: -1, verifiedDenominator: 2), "-0.5 should be -1/2, got \(Fraction(float: -0.5))")
         XCTAssertEqual(Fraction(float: -3.9), Fraction(verifiedNumerator: -39, verifiedDenominator: 10), "-3.9 should be -39/10, got \(Fraction(float: -3.9))")
     }
+
+    // `wholes` is folded into the numerator, and used not to be checked when it was: it could
+    // smuggle Int.min past the guards, and overflow past the trap the type promises.
+    func testWholesIsRangeChecked() {
+        XCTAssertNil(Fraction(numerator: 0, denominator: 1, wholes: Int.min),
+                     "Folding Int.min wholes into the numerator yields Int.min, which is illegal")
+        XCTAssertNil(Fraction(numerator: -1, denominator: 1, wholes: Int.min + 1),
+                     "Folding wholes into the numerator must not overflow")
+        XCTAssertNil(Fraction(numerator: 1, denominator: Int.max, wholes: 2),
+                     "denominator * wholes must not overflow")
+        XCTAssertNil(Fraction(numerator: Int.max, denominator: 1, wholes: 1),
+                     "numerator + denominator * wholes must not overflow")
+
+        // Everything legal still works, the existing boundary case included.
+        let atMax = Fraction(numerator: 0, denominator: 1, wholes: Int.max)
+        XCTAssertEqual(atMax?.numerator, Int.max, "wholes: Int.max with a denominator of 1 is legal")
+        XCTAssertEqual(atMax?.denominator, 1, "wholes: Int.max with a denominator of 1 is legal")
+
+        let mixed = Fraction(numerator: 3, denominator: 4, wholes: 2)
+        XCTAssertEqual(mixed?.numerator, 11, "2 + 3/4 is 11/4")
+        XCTAssertEqual(mixed?.denominator, 4, "2 + 3/4 is 11/4")
+
+        let negativeWholes = Fraction(numerator: 1, denominator: 2, wholes: -3)
+        XCTAssertEqual(negativeWholes?.numerator, -5, "-3 + 1/2 is -5/2")
+        XCTAssertEqual(negativeWholes?.denominator, 2, "-3 + 1/2 is -5/2")
+    }
 }

@@ -20,5 +20,13 @@ let package = Package(
             name: "FractionsTests",
             dependencies: ["Fractions"]
         ),
+        // A local benchmark for Fraction's hot path. It is deliberately not exposed as a
+        // product, so it stays invisible to anything that depends on this package, and it must
+        // never gain a package dependency: the manifest's empty dependency graph would
+        // otherwise propagate into every dependent's Package.resolved.
+        .executableTarget(
+            name: "FractionsBenchmarks",
+            dependencies: ["Fractions"]
+        ),
     ]
 )
