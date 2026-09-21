@@ -101,11 +101,20 @@ public struct Fraction: Codable, Sendable {
     ///
     /// The lower end of the valid range for the parameters is Int.min + 1, because you cannot flip Int.min to to its positive counterpart –it results in an overflow–
     /// which may happen in the `reduce()` function.
+    ///
+    /// `wholes` is folded into the numerator, so the initializer fails if `denominator * wholes`
+    /// overflows, if adding it to `numerator` overflows, or if the result would be `Int.min` —
+    /// all of which are as illegal as passing `Int.min` for the numerator directly.
     public init?(numerator: Int, denominator: Int, wholes: Int = 0) {
         guard denominator != 0 else { return nil }
         guard numerator > Int.min, denominator > Int.min else { return nil }
 
-        self.numerator = numerator + (denominator * wholes)
+        let (offset, offsetOverflowed) = denominator.multipliedReportingOverflow(by: wholes)
+        guard !offsetOverflowed else { return nil }
+        let (combinedNumerator, sumOverflowed) = numerator.addingReportingOverflow(offset)
+        guard !sumOverflowed, combinedNumerator > Int.min else { return nil }
+
+        self.numerator = combinedNumerator
         self.denominator = denominator
     }
 
@@ -149,12 +158,21 @@ public struct Fraction: Codable, Sendable {
     /// It can be very inconvenient to always have to unwrap the initializer. Hence, if you think you know what you are doing, you can use this guaranteed initializer.
     /// Of course, you need to ensure you only pass in valid values. E.g. passing in a 0 for the denominator is a very bad idea. Also, passing Int.max for `wholes`
     /// and a positive fraction with it will result in an arithmetic overflow.
+    ///
+    /// `wholes` is folded into the numerator, and is checked on the same terms as the numerator
+    /// itself: folding it in may neither overflow nor land on `Int.min`.
     public init(verifiedNumerator: Int, verifiedDenominator: Int = 1, wholes: Int = 0) {
         precondition(verifiedNumerator > Int.min, "Illegal numerator value: Int.min is not allowed")
         precondition(verifiedDenominator > Int.min, "Illegal denominator value: Int.min is not allowed")
         precondition(verifiedDenominator != 0, "0 is an illegal value for the denominator")
-        
-        self.numerator = verifiedNumerator + (verifiedDenominator * wholes)
+
+        let (offset, offsetOverflowed) = verifiedDenominator.multipliedReportingOverflow(by: wholes)
+        precondition(!offsetOverflowed, "Illegal number of wholes: \(wholes) times a denominator of \(verifiedDenominator) overflows")
+        let (combinedNumerator, sumOverflowed) = verifiedNumerator.addingReportingOverflow(offset)
+        precondition(!sumOverflowed, "Illegal number of wholes: folding \(wholes) wholes into a numerator of \(verifiedNumerator) overflows")
+        precondition(combinedNumerator > Int.min, "Illegal numerator value: folding \(wholes) wholes into \(verifiedNumerator) yields Int.min, which is not allowed")
+
+        self.numerator = combinedNumerator
         self.denominator = verifiedDenominator
     }
 
