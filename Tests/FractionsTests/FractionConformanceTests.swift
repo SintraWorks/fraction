@@ -110,4 +110,24 @@ class FractionConformanceTests: XCTestCase {
         let fraction = Fraction(verifiedNumerator: 1, verifiedDenominator: 2)
         XCTAssertEqual(requireSendable(fraction), fraction, "Fraction should conform to Sendable")
     }
+
+    // Equal values must hash equally. Checked against equality itself over a random corpus,
+    // rather than against a list of hand-picked spellings.
+    func testEqualValuesHashEqually() {
+        let seed: UInt64 = 0x5EED_0000_0000_0004
+        var generator = SplitMix64(seed: seed)
+        var equalPairsSeen = 0
+
+        for _ in 0 ..< 100_000 {
+            let lhs = generator.nextFraction(bound: 12)
+            let rhs = generator.nextFraction(bound: 12)
+            guard lhs == rhs else { continue }
+
+            equalPairsSeen += 1
+            XCTAssertEqual(lhs.hashValue, rhs.hashValue, "\(lhs) == \(rhs) but they hash differently (seed \(seed))")
+        }
+
+        // Guard against the test passing silently because nothing compared equal.
+        XCTAssertGreaterThan(equalPairsSeen, 1000, "The corpus produced only \(equalPairsSeen) equal pairs, too few to be meaningful")
+    }
 }
