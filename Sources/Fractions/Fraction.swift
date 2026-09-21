@@ -181,21 +181,44 @@ public struct Fraction: Codable, Sendable {
         reduce()
     }
 
-    /// Reduce a fraction to its Greatest Common Denominator
-    public mutating func reduce() {
-        let (absNumerator, numeratorSign) = numerator < 0 ? (-numerator, -1) : (numerator, 1)
-        let (absDenominator, denominatorSign) = denominator < 0 ? (-denominator, -1) : (denominator, 1)
+    /// Euclid's algorithm, over magnitudes.
+    ///
+    /// Working in `UInt` rather than `Int` is what lets the callers avoid negating, and so avoid
+    /// trapping on `Int.min`. Returns 0 only when both arguments are 0.
+    static func greatestCommonDivisor(_ a: UInt, _ b: UInt) -> UInt {
+        var u = a
+        var v = b
 
-        var u = absNumerator
-        var v = absDenominator
-
-        // Euclid's solution to finding the Greatest Common Denominator
-        while (v != 0) {
+        while v != 0 {
             (v, u) = (u % v, v)
         }
 
-        numerator = absNumerator / u * numeratorSign
-        denominator = absDenominator / u * denominatorSign
+        return u
+    }
+
+    /// Reduce a fraction to its Greatest Common Denominator.
+    ///
+    /// The sign stays where it was written: `3/-15` reduces to `1/-5`, and `-2/-4` to `-1/-2`.
+    /// Use `normalize()` to move a negative sign onto the numerator.
+    ///
+    /// The reduction is carried out on the magnitudes, so a field holding `Int.min` reduces
+    /// correctly rather than trapping on a negation it cannot represent, and `0/0` — which no
+    /// initializer produces — is left alone rather than dividing by zero.
+    public mutating func reduce() {
+        let numeratorMagnitude = numerator.magnitude
+        let denominatorMagnitude = denominator.magnitude
+
+        let divisor = Self.greatestCommonDivisor(numeratorMagnitude, denominatorMagnitude)
+        guard divisor != 0 else { return }
+
+        let reducedNumerator = numeratorMagnitude / divisor
+        let reducedDenominator = denominatorMagnitude / divisor
+
+        // A magnitude of 2^63 can only have come from `Int.min`, which is negative and so takes
+        // the negating branch back to `Int.min` exactly. Every other magnitude is at most
+        // `Int.max`. So neither branch can produce a value `Int` cannot represent.
+        numerator = numerator < 0 ? Int(bitPattern: 0 &- reducedNumerator) : Int(bitPattern: reducedNumerator)
+        denominator = denominator < 0 ? Int(bitPattern: 0 &- reducedDenominator) : Int(bitPattern: reducedDenominator)
     }
 
     /// Returns a new fraction representing the reduction of the receiver to its Greatest Common Denominator
