@@ -25,7 +25,7 @@
 
 // MARK: - Hashable
 
-extension Fraction: Hashable {
+extension Rational: Hashable {
     /// Hashes the fraction's canonical form: reduced to lowest terms, with the sign on the
     /// numerator.
     ///
@@ -41,35 +41,32 @@ extension Fraction: Hashable {
     ///   reduction-invariant — so this is the one operation of the three that still reduces.
     ///
     /// The canonical form is fed to the hasher as two numbers rather than assembled into a
-    /// `Fraction`, which avoids the copies `reduced().normalized()` made and keeps the
-    /// arithmetic on magnitudes, so a field holding `Int.min` does not trap.
+    /// fraction, which avoids the copies `reduced().normalized()` made and keeps the arithmetic
+    /// on magnitudes, so a field holding `Integer.min` does not trap.
+    @inlinable
     public func hash(into hasher: inout Hasher) {
-        let numeratorMagnitude = numerator.magnitude
-        let denominatorMagnitude = denominator.magnitude
-        let divisor = Fraction.greatestCommonDivisor(numeratorMagnitude, denominatorMagnitude)
-
         // Only 0/0 has no canonical form, and no initializer produces it. Hash it as a constant
         // rather than dividing by zero.
-        guard divisor != 0 else {
-            hasher.combine(0)
-            hasher.combine(0 as UInt)
+        guard let canonical = Rational.lowestTerms(numerator.magnitude, denominator.magnitude) else {
+            hasher.combine(Integer.zero)
+            hasher.combine(Integer.Magnitude.zero)
             return
         }
 
-        let reducedNumerator = numeratorMagnitude / divisor
         // A negative sign belongs on the numerator, and zero has no sign, so `0/5` and `0/-5`
-        // agree. Negating a magnitude of 2^63 lands on `Int.min`, which is exactly the value a
-        // canonical numerator of that size has to take, so this is always representable.
+        // agree. Negating the largest magnitude, `Integer.max + 1`, lands on `Integer.min`, which
+        // is exactly the value a canonical numerator of that size has to take, so this is always
+        // representable.
         let isNegative = (numerator < 0) != (denominator < 0)
-        hasher.combine(isNegative ? Int(bitPattern: 0 &- reducedNumerator) : Int(bitPattern: reducedNumerator))
+        hasher.combine(isNegative ? Integer(truncatingIfNeeded: 0 &- canonical.numerator) : Integer(truncatingIfNeeded: canonical.numerator))
         // The canonical denominator is positive by construction, so it is hashed as a magnitude.
-        hasher.combine(denominatorMagnitude / divisor)
+        hasher.combine(canonical.denominator)
     }
 }
 
 // MARK: - CustomStringConvertible
 
-/// `description` is implemented in `Fraction` itself; declaring the conformance here makes
+/// `description` is implemented in `Rational` itself; declaring the conformance here makes
 /// `print(_:)` and string interpolation use it, rather than falling back to the reflected
 /// representation.
-extension Fraction: CustomStringConvertible {}
+extension Rational: CustomStringConvertible {}

@@ -14,7 +14,7 @@ import XCTest
 // MARK: - Exact reference
 
 /// A numerator and denominator in `Int128`, wide enough for anything the operations below form
-/// from `Int` operands, so the reference itself never overflows.
+/// from operands of up to 64 bits, so the reference itself never overflows.
 @available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *)
 private struct Exact {
     var numerator: Int128
@@ -31,10 +31,12 @@ private struct Exact {
         return Exact(numerator: numerator / Int128(u), denominator: denominator / Int128(u))
     }
 
-    /// The fraction with these fields, or `nil` if either lies outside `Int.min + 1 ... Int.max`.
-    var fraction: Fraction? {
-        guard numerator.magnitude <= UInt128(Int.max), denominator.magnitude <= UInt128(Int.max) else { return nil }
-        return unchecked(Int(numerator), Int(denominator))
+    /// The fraction of `Integer` with these fields, or `nil` if either lies outside
+    /// `Integer.min + 1 ... Integer.max`.
+    func fraction<Integer>(of _: Integer.Type) -> Rational<Integer>? {
+        let limit = UInt128(Integer.max)
+        guard numerator.magnitude <= limit, denominator.magnitude <= limit else { return nil }
+        return Rational(uncheckedNumerator: Integer(numerator), denominator: Integer(denominator))
     }
 }
 
@@ -46,31 +48,31 @@ private struct Exact {
 @available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *)
 private enum Shipped {
     /// `add`, which normalized both operands first.
-    static func sum(_ x: Fraction, _ y: Fraction) -> Exact {
+    static func sum<Integer>(_ x: Rational<Integer>, _ y: Rational<Integer>) -> Exact {
         let (a, b) = normalizedFields(x)
         let (c, d) = normalizedFields(y)
         return b == d ? Exact(numerator: a + c, denominator: b) : Exact(numerator: a * d + c * b, denominator: b * d)
     }
 
     /// `subtract`, which did not normalize.
-    static func difference(_ x: Fraction, _ y: Fraction) -> Exact {
+    static func difference<Integer>(_ x: Rational<Integer>, _ y: Rational<Integer>) -> Exact {
         let (a, b) = (Int128(x.numerator), Int128(x.denominator))
         let (c, d) = (Int128(y.numerator), Int128(y.denominator))
         return b == d ? Exact(numerator: a - c, denominator: b) : Exact(numerator: a * d - c * b, denominator: b * d)
     }
 
-    static func product(_ x: Fraction, _ y: Fraction) -> Exact {
+    static func product<Integer>(_ x: Rational<Integer>, _ y: Rational<Integer>) -> Exact {
         Exact(numerator: Int128(x.numerator) * Int128(y.numerator),
               denominator: Int128(x.denominator) * Int128(y.denominator))
     }
 
     /// `divide` and `nonZeroDivide`.
-    static func quotient(_ x: Fraction, _ y: Fraction) -> Exact {
+    static func quotient<Integer>(_ x: Rational<Integer>, _ y: Rational<Integer>) -> Exact {
         Exact(numerator: Int128(x.numerator) * Int128(y.denominator),
               denominator: Int128(x.denominator) * Int128(y.numerator))
     }
 
-    private static func normalizedFields(_ fraction: Fraction) -> (Int128, Int128) {
+    private static func normalizedFields<Integer>(_ fraction: Rational<Integer>) -> (Int128, Int128) {
         let (numerator, denominator) = (Int128(fraction.numerator), Int128(fraction.denominator))
         return denominator < 0 ? (-numerator, -denominator) : (numerator, denominator)
     }
@@ -81,26 +83,26 @@ private enum Shipped {
 /// One arithmetic operation, three ways: as 1.2.0 spelled its result, through the public API, and
 /// through the function that API wraps, which returns `nil` wherever the API would trap.
 @available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *)
-private struct Operation {
+private struct Operation<Integer: FixedWidthInteger & SignedInteger & Sendable> {
     var name: String
-    var shipped: (Fraction, Fraction) -> Exact
-    var api: (Fraction, Fraction, Bool) -> Fraction
-    var core: (Fraction, Fraction, Bool) -> Fraction?
+    var shipped: (Rational<Integer>, Rational<Integer>) -> Exact
+    var api: (Rational<Integer>, Rational<Integer>, Bool) -> Rational<Integer>
+    var core: (Rational<Integer>, Rational<Integer>, Bool) -> Rational<Integer>?
     /// The operators always reduce, so they have no unreduced result to check.
     var alwaysReduces = false
 }
 
 /// Fields compared as written, not as values: sign placement is part of what is pinned down.
-private func sameFields(_ lhs: Fraction?, _ rhs: Fraction?) -> Bool {
+func sameFields<Integer>(_ lhs: Rational<Integer>?, _ rhs: Rational<Integer>?) -> Bool {
     lhs?.numerator == rhs?.numerator && lhs?.denominator == rhs?.denominator
 }
 
-private func describe(_ fraction: Fraction?) -> String {
+func describe<Integer>(_ fraction: Rational<Integer>?) -> String {
     fraction.map { $0.description } ?? "nil"
 }
 
-@available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *)
-private struct Tally {
+/// What a run of checks found.
+struct Tally {
     var cases = 0
     var mismatches = 0
     var firstMismatch: String?
@@ -109,15 +111,24 @@ private struct Tally {
     /// Results that do not fit at all.
     var refused = 0
 
-    mutating func check(_ operation: Operation, on pairs: [(Fraction, Fraction)]) {
+    mutating func record(mismatch description: @autoclosure () -> String) {
+        mismatches += 1
+        if firstMismatch == nil { firstMismatch = description() }
+    }
+}
+
+@available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *)
+extension Tally {
+    fileprivate mutating func check<Integer>(_ operation: Operation<Integer>,
+                                             on pairs: [(Rational<Integer>, Rational<Integer>)]) {
         for reducing in operation.alwaysReduces ? [true] : [true, false] {
             for (x, y) in pairs {
                 let spelled = operation.shipped(x, y)
-                let expected = (reducing ? spelled.reduced : spelled).fraction
+                let expected = (reducing ? spelled.reduced : spelled).fraction(of: Integer.self)
                 cases += 1
                 if expected == nil {
                     refused += 1
-                } else if spelled.fraction == nil {
+                } else if spelled.fraction(of: Integer.self) == nil {
                     rescued += 1
                 }
 
@@ -126,11 +137,8 @@ private struct Tally {
                 let fromCore = operation.core(x, y, reducing)
                 let fromAPI = fromCore == nil ? nil : operation.api(x, y, reducing)
                 if !sameFields(fromCore, expected) || !sameFields(fromAPI, expected) {
-                    mismatches += 1
-                    if firstMismatch == nil {
-                        firstMismatch = "\(operation.name) of \(x) and \(y), reducing: \(reducing), should be "
-                            + "\(describe(expected)), got \(describe(fromCore)) from the core and \(describe(fromAPI)) from the API"
-                    }
+                    record(mismatch: "\(operation.name) on \(Integer.self) of \(x) and \(y), reducing: \(reducing), "
+                        + "should be \(describe(expected)), got \(describe(fromCore)) from the core and \(describe(fromAPI)) from the API")
                 }
             }
         }
@@ -140,37 +148,39 @@ private struct Tally {
 // MARK: - Inputs
 
 extension SplitMix64 {
-    /// A magnitude in `1 ... Int.max`, from a regime that stresses one path or another: small
-    /// values, arbitrary bit lengths, small multiples of powers of two, values just below
-    /// `Int.max`, and large fractions of it.
-    mutating func nextEdgeMagnitude() -> Int {
+    /// A magnitude in `1 ... Integer.max`, from a regime that stresses one path or another:
+    /// small values, arbitrary bit lengths, small multiples of powers of two, values just below
+    /// `Integer.max`, and large fractions of it.
+    mutating func nextEdgeMagnitude<Integer: FixedWidthInteger & SignedInteger>(_: Integer.Type) -> Integer {
+        let bits = Integer.bitWidth - 1
         switch Int.random(in: 0 ..< 5, using: &self) {
         case 0:
-            return Int.random(in: 1 ... 4096, using: &self)
+            return Integer.random(in: 1 ... Integer(clamping: 4096), using: &self)
         case 1:
-            let bits = Int.random(in: 1 ... 63, using: &self)
-            let lowest = bits == 1 ? 1 : 1 << (bits - 1)
-            let highest = bits == 63 ? Int.max : (1 << bits) - 1
-            return Int.random(in: lowest ... highest, using: &self)
+            let length = Int.random(in: 1 ... bits, using: &self)
+            let lowest: Integer = length == 1 ? 1 : 1 << (length - 1)
+            let highest: Integer = length == bits ? Integer.max : (1 << length) - 1
+            return Integer.random(in: lowest ... highest, using: &self)
         case 2:
-            return Int.random(in: 1 ... 64, using: &self) << Int.random(in: 0 ... 56, using: &self)
+            // Factors below 2^7, so the shift can never carry one past `Integer.max`.
+            return Integer.random(in: 1 ... Integer(clamping: 64), using: &self) << Int.random(in: 0 ... Swift.max(0, bits - 7), using: &self)
         case 3:
-            return Int.max - Int.random(in: 0 ... 1000, using: &self)
+            return Integer.max - Integer.random(in: 0 ... Swift.min(Integer(clamping: 1000), Integer.max - 1), using: &self)
         default:
-            return Int.max / Int.random(in: 1 ... 1000, using: &self)
+            return Integer.max / Integer.random(in: 1 ... Integer(clamping: 1000), using: &self)
         }
     }
 
-    /// A fraction with fields near the edges of `Int`, in all four sign combinations, with a
+    /// A fraction with fields near the edges of `Integer`, in all four sign combinations, with a
     /// zero numerator now and then, and a quarter of them left unreduced by a shared factor.
-    mutating func nextEdgeFraction() -> Fraction {
-        var numerator = Int.random(in: 0 ..< 16, using: &self) == 0 ? 0 : nextEdgeMagnitude()
-        var denominator = nextEdgeMagnitude()
+    mutating func nextEdgeFraction<Integer: FixedWidthInteger & SignedInteger & Sendable>(_: Integer.Type) -> Rational<Integer> {
+        var numerator: Integer = Int.random(in: 0 ..< 16, using: &self) == 0 ? 0 : nextEdgeMagnitude(Integer.self)
+        var denominator: Integer = nextEdgeMagnitude(Integer.self)
 
         if Int.random(in: 0 ..< 4, using: &self) == 0 {
-            let factor = Bool.random(using: &self)
-                ? Int.random(in: 2 ... 16, using: &self)
-                : 1 << Int.random(in: 1 ... 40, using: &self)
+            let factor: Integer = Bool.random(using: &self)
+                ? Integer.random(in: 2 ... Integer(clamping: 16), using: &self)
+                : 1 << Int.random(in: 1 ... Swift.max(1, Integer.bitWidth - 24), using: &self)
             let (scaledNumerator, numeratorOverflow) = numerator.multipliedReportingOverflow(by: factor)
             let (scaledDenominator, denominatorOverflow) = denominator.multipliedReportingOverflow(by: factor)
             if !numeratorOverflow && !denominatorOverflow {
@@ -180,187 +190,228 @@ extension SplitMix64 {
 
         if Bool.random(using: &self) { numerator = -numerator }
         if Bool.random(using: &self) { denominator = -denominator }
-        return Fraction(verifiedNumerator: numerator, verifiedDenominator: denominator)
+        return Rational(verifiedNumerator: numerator, verifiedDenominator: denominator)
     }
 
-    /// An integer operand, written `i/1`: any `Int`, `Int.min` and zero included.
-    mutating func nextEdgeInteger() -> Fraction {
-        let integer: Int
+    /// An integer operand, written `i/1`: any `Integer`, `Integer.min` and zero included.
+    mutating func nextEdgeInteger<Integer: FixedWidthInteger & SignedInteger & Sendable>(_: Integer.Type) -> Rational<Integer> {
+        let integer: Integer
         switch Int.random(in: 0 ..< 8, using: &self) {
-        case 0: integer = Int.min
+        case 0: integer = Integer.min
         case 1: integer = 0
         case 2: integer = [1, -1, 2, -2].randomElement(using: &self)!
-        default: integer = Bool.random(using: &self) ? nextEdgeMagnitude() : -nextEdgeMagnitude()
+        default: integer = Bool.random(using: &self) ? nextEdgeMagnitude(Integer.self) : -nextEdgeMagnitude(Integer.self)
         }
-        return unchecked(integer, 1)
+        return Rational(uncheckedNumerator: integer, denominator: 1)
     }
 
     /// Two fractions, some of them sharing a denominator as written, equal, or opposite, which
     /// are the cases with paths of their own.
-    mutating func nextEdgePair() -> (Fraction, Fraction) {
-        let x = nextEdgeFraction()
+    mutating func nextEdgePair<Integer: FixedWidthInteger & SignedInteger & Sendable>(_: Integer.Type) -> (Rational<Integer>, Rational<Integer>) {
+        let x = nextEdgeFraction(Integer.self)
         switch Int.random(in: 0 ..< 8, using: &self) {
-        case 0: return (x, Fraction(verifiedNumerator: nextEdgeFraction().numerator, verifiedDenominator: x.denominator))
+        case 0: return (x, Rational(verifiedNumerator: nextEdgeFraction(Integer.self).numerator, verifiedDenominator: x.denominator))
         case 1: return (x, x)
-        case 2: return (x, Fraction(verifiedNumerator: -x.numerator, verifiedDenominator: x.denominator))
-        default: return (x, nextEdgeFraction())
+        case 2: return (x, Rational(verifiedNumerator: -x.numerator, verifiedDenominator: x.denominator))
+        default: return (x, nextEdgeFraction(Integer.self))
         }
+    }
+
+    /// Pairs of fractions, fractions with integers, and integers with fractions.
+    mutating func nextEdgeCorpora<Integer: FixedWidthInteger & SignedInteger & Sendable>(_: Integer.Type, count: Int)
+        -> (fractions: [(Rational<Integer>, Rational<Integer>)], integers: [(Rational<Integer>, Rational<Integer>)],
+            integersFirst: [(Rational<Integer>, Rational<Integer>)]) {
+        ((0 ..< count).map { _ in nextEdgePair(Integer.self) },
+         (0 ..< count).map { _ in (nextEdgeFraction(Integer.self), nextEdgeInteger(Integer.self)) },
+         (0 ..< count).map { _ in (nextEdgeInteger(Integer.self), nextEdgeFraction(Integer.self)) })
     }
 }
 
 // MARK: - Tests
 
-/// Arithmetic, checked by property rather than by example.
+/// Arithmetic, checked by property rather than by example, at every width the reference covers.
+///
+/// The exact path is the same generic code at every width, and at 8 and 16 bits nearly every
+/// operation reaches an edge, so the narrow runs stress it far more densely than `Int` can.
+/// `Fraction128`, which is beyond an `Int128` reference, is checked in its own tests.
 class FractionArithmeticDifferentialTests: XCTestCase {
-    private static let pairCount = 40_000
-
-    /// Pairs of fractions, fractions with integers, and integers with fractions.
-    private func corpora(seed: UInt64) -> (fractions: [(Fraction, Fraction)], integers: [(Fraction, Fraction)],
-                                           integersFirst: [(Fraction, Fraction)]) {
-        var generator = SplitMix64(seed: seed)
-        let count = Self.pairCount
-        return ((0 ..< count).map { _ in generator.nextEdgePair() },
-                (0 ..< count).map { _ in (generator.nextEdgeFraction(), generator.nextEdgeInteger()) },
-                (0 ..< count).map { _ in (generator.nextEdgeInteger(), generator.nextEdgeFraction()) })
+    /// Pairs per corpus: plenty at `Int`, and enough at the narrow widths, where edges are dense.
+    private static func pairCount<Integer: FixedWidthInteger>(_: Integer.Type) -> Int {
+        Integer.bitWidth == 64 ? 40_000 : 10_000
     }
 
     @available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *)
-    private func assertAgrees(_ tally: Tally, seed: UInt64, file: StaticString = #filePath, line: UInt = #line) {
+    private func assertAgrees<Integer>(_ tally: Tally, _: Integer.Type, seed: UInt64,
+                                       file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertEqual(tally.mismatches, 0, """
-            Disagrees with the exact reference on \(tally.mismatches) of \(tally.cases) cases (seed \(seed)). \
-            First: \(tally.firstMismatch ?? "none")
+            Disagrees with the exact reference on \(tally.mismatches) of \(tally.cases) cases for \(Integer.self) \
+            (seed \(seed)). First: \(tally.firstMismatch ?? "none")
             """, file: file, line: line)
         // The corpus exists to reach the exact path and the refusals; make sure it still does.
         XCTAssertGreaterThan(tally.rescued, tally.cases / 100,
-                             "Too few results that used to trap to exercise the exact path", file: file, line: line)
+                             "Too few results that used to trap to exercise the exact path for \(Integer.self)", file: file, line: line)
         XCTAssertGreaterThan(tally.refused, tally.cases / 100,
-                             "Too few results that do not fit to exercise refusing them", file: file, line: line)
+                             "Too few results that do not fit to exercise refusing them for \(Integer.self)", file: file, line: line)
+    }
+
+    @available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *)
+    private func checkAddition<Integer: FixedWidthInteger & SignedInteger & Sendable>(_: Integer.Type, seed: UInt64) {
+        var generator = SplitMix64(seed: seed)
+        let corpus = generator.nextEdgeCorpora(Integer.self, count: Self.pairCount(Integer.self))
+        var tally = Tally()
+
+        tally.check(Operation<Integer>(name: "add",
+                                       shipped: Shipped.sum,
+                                       api: { $0.adding($1, reducing: $2) },
+                                       core: { Rational.sum($0.normalized(), $1.normalized(), subtracting: false, reducing: $2) }),
+                    on: corpus.fractions)
+        tally.check(Operation<Integer>(name: "add(integer)",
+                                       shipped: Shipped.sum,
+                                       api: { $0.adding($1.numerator, reducing: $2) },
+                                       core: { Rational.sum($0.normalized(), $1, subtracting: false, reducing: $2) }),
+                    on: corpus.integers)
+        tally.check(Operation<Integer>(name: "integer + fraction",
+                                       shipped: { Shipped.sum($1, $0) },
+                                       api: { a, b, _ in a.numerator + b },
+                                       core: { Rational.sum($1.normalized(), $0, subtracting: false, reducing: $2) },
+                                       alwaysReduces: true),
+                    on: corpus.integersFirst)
+
+        assertAgrees(tally, Integer.self, seed: seed)
+    }
+
+    @available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *)
+    private func checkSubtraction<Integer: FixedWidthInteger & SignedInteger & Sendable>(_: Integer.Type, seed: UInt64) {
+        var generator = SplitMix64(seed: seed)
+        let corpus = generator.nextEdgeCorpora(Integer.self, count: Self.pairCount(Integer.self))
+        var tally = Tally()
+
+        tally.check(Operation<Integer>(name: "subtract",
+                                       shipped: Shipped.difference,
+                                       api: { $0.subtracting($1, reducing: $2) },
+                                       core: { Rational.sum($0, $1, subtracting: true, reducing: $2) }),
+                    on: corpus.fractions)
+        tally.check(Operation<Integer>(name: "subtract(integer)",
+                                       shipped: Shipped.difference,
+                                       api: { $0.subtracting($1.numerator, reducing: $2) },
+                                       core: { Rational.sum($0, $1, subtracting: true, reducing: $2) }),
+                    on: corpus.integers)
+        tally.check(Operation<Integer>(name: "integer - fraction",
+                                       shipped: Shipped.difference,
+                                       api: { a, b, _ in a.numerator - b },
+                                       core: { Rational.sum($0, $1, subtracting: true, reducing: $2) },
+                                       alwaysReduces: true),
+                    on: corpus.integersFirst)
+
+        assertAgrees(tally, Integer.self, seed: seed)
+    }
+
+    @available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *)
+    private func checkMultiplication<Integer: FixedWidthInteger & SignedInteger & Sendable>(_: Integer.Type, seed: UInt64) {
+        var generator = SplitMix64(seed: seed)
+        let corpus = generator.nextEdgeCorpora(Integer.self, count: Self.pairCount(Integer.self))
+        var tally = Tally()
+
+        tally.check(Operation<Integer>(name: "multiply",
+                                       shipped: Shipped.product,
+                                       api: { $0.multiplying(by: $1, reducing: $2) },
+                                       core: { Rational.product($0, $1, reducing: $2) }),
+                    on: corpus.fractions)
+        tally.check(Operation<Integer>(name: "multiply(integer)",
+                                       shipped: Shipped.product,
+                                       api: { $0.multiplying(by: $1.numerator, reducing: $2) },
+                                       core: { Rational.product($0, $1, reducing: $2) }),
+                    on: corpus.integers)
+        tally.check(Operation<Integer>(name: "integer * fraction",
+                                       shipped: { Shipped.product($1, $0) },
+                                       api: { a, b, _ in a.numerator * b },
+                                       core: { Rational.product($1, $0, reducing: $2) },
+                                       alwaysReduces: true),
+                    on: corpus.integersFirst)
+
+        assertAgrees(tally, Integer.self, seed: seed)
+    }
+
+    @available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *)
+    private func checkDivision<Integer: FixedWidthInteger & SignedInteger & Sendable>(_: Integer.Type, seed: UInt64) {
+        var generator = SplitMix64(seed: seed)
+        let corpus = generator.nextEdgeCorpora(Integer.self, count: Self.pairCount(Integer.self))
+        // Dividing by zero throws, or, through nonZeroDivide, is the caller's to avoid.
+        let fractions = corpus.fractions.filter { $0.1.numerator != 0 }
+        let integers = corpus.integers.filter { $0.1.numerator != 0 }
+        let integersFirst = corpus.integersFirst.filter { $0.1.numerator != 0 }
+        let reciprocal = { (fraction: Rational<Integer>) in
+            Rational(uncheckedNumerator: fraction.denominator, denominator: fraction.numerator)
+        }
+        var tally = Tally()
+
+        tally.check(Operation<Integer>(name: "divide",
+                                       shipped: Shipped.quotient,
+                                       api: { try! $0.dividing(by: $1, reducing: $2) },
+                                       core: { Rational.product($0, reciprocal($1), reducing: $2) }),
+                    on: fractions)
+        tally.check(Operation<Integer>(name: "nonZeroDivide",
+                                       shipped: Shipped.quotient,
+                                       api: { $0.nonZeroDividing(by: $1, reducing: $2) },
+                                       core: { Rational.product($0, reciprocal($1), reducing: $2) }),
+                    on: fractions)
+        tally.check(Operation<Integer>(name: "divide(integer)",
+                                       shipped: Shipped.quotient,
+                                       api: { try! $0.dividing(by: $1.numerator, reducing: $2) },
+                                       core: { Rational.product($0, reciprocal($1), reducing: $2) }),
+                    on: integers)
+        tally.check(Operation<Integer>(name: "nonZeroDivide(integer)",
+                                       shipped: Shipped.quotient,
+                                       api: { $0.nonZeroDividing(by: $1.numerator, reducing: $2) },
+                                       core: { Rational.product($0, reciprocal($1), reducing: $2) }),
+                    on: integers)
+        tally.check(Operation<Integer>(name: "integer / fraction",
+                                       shipped: Shipped.quotient,
+                                       api: { a, b, _ in try! a.numerator / b },
+                                       core: { Rational.product($0, reciprocal($1), reducing: $2) },
+                                       alwaysReduces: true),
+                    on: integersFirst)
+
+        assertAgrees(tally, Integer.self, seed: seed)
     }
 
     func testAdditionMatchesTheExactReference() throws {
         guard #available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *) else {
             throw XCTSkip("The exact reference needs Int128.")
         }
-        let seed: UInt64 = 0x5EED_0000_0000_0010
-        let corpus = corpora(seed: seed)
-        var tally = Tally()
-
-        tally.check(Operation(name: "add",
-                              shipped: Shipped.sum,
-                              api: { $0.adding($1, reducing: $2) },
-                              core: { Fraction.sum($0.normalized(), $1.normalized(), subtracting: false, reducing: $2) }),
-                    on: corpus.fractions)
-        tally.check(Operation(name: "add(Int)",
-                              shipped: Shipped.sum,
-                              api: { $0.adding($1.numerator, reducing: $2) },
-                              core: { Fraction.sum($0.normalized(), $1, subtracting: false, reducing: $2) }),
-                    on: corpus.integers)
-        tally.check(Operation(name: "Int + Fraction",
-                              shipped: { Shipped.sum($1, $0) },
-                              api: { a, b, _ in a.numerator + b },
-                              core: { Fraction.sum($1.normalized(), $0, subtracting: false, reducing: $2) },
-                              alwaysReduces: true),
-                    on: corpus.integersFirst)
-
-        assertAgrees(tally, seed: seed)
+        checkAddition(Int.self, seed: 0x5EED_0000_0000_0010)
+        checkAddition(Int32.self, seed: 0x5EED_0000_0000_0110)
+        checkAddition(Int16.self, seed: 0x5EED_0000_0000_0210)
+        checkAddition(Int8.self, seed: 0x5EED_0000_0000_0310)
     }
 
     func testSubtractionMatchesTheExactReference() throws {
         guard #available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *) else {
             throw XCTSkip("The exact reference needs Int128.")
         }
-        let seed: UInt64 = 0x5EED_0000_0000_0011
-        let corpus = corpora(seed: seed)
-        var tally = Tally()
-
-        tally.check(Operation(name: "subtract",
-                              shipped: Shipped.difference,
-                              api: { $0.subtracting($1, reducing: $2) },
-                              core: { Fraction.sum($0, $1, subtracting: true, reducing: $2) }),
-                    on: corpus.fractions)
-        tally.check(Operation(name: "subtract(Int)",
-                              shipped: Shipped.difference,
-                              api: { $0.subtracting($1.numerator, reducing: $2) },
-                              core: { Fraction.sum($0, $1, subtracting: true, reducing: $2) }),
-                    on: corpus.integers)
-        tally.check(Operation(name: "Int - Fraction",
-                              shipped: Shipped.difference,
-                              api: { a, b, _ in a.numerator - b },
-                              core: { Fraction.sum($0, $1, subtracting: true, reducing: $2) },
-                              alwaysReduces: true),
-                    on: corpus.integersFirst)
-
-        assertAgrees(tally, seed: seed)
+        checkSubtraction(Int.self, seed: 0x5EED_0000_0000_0011)
+        checkSubtraction(Int32.self, seed: 0x5EED_0000_0000_0111)
+        checkSubtraction(Int16.self, seed: 0x5EED_0000_0000_0211)
+        checkSubtraction(Int8.self, seed: 0x5EED_0000_0000_0311)
     }
 
     func testMultiplicationMatchesTheExactReference() throws {
         guard #available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *) else {
             throw XCTSkip("The exact reference needs Int128.")
         }
-        let seed: UInt64 = 0x5EED_0000_0000_0012
-        let corpus = corpora(seed: seed)
-        var tally = Tally()
-
-        tally.check(Operation(name: "multiply",
-                              shipped: Shipped.product,
-                              api: { $0.multiplying(by: $1, reducing: $2) },
-                              core: { Fraction.product($0, $1, reducing: $2) }),
-                    on: corpus.fractions)
-        tally.check(Operation(name: "multiply(Int)",
-                              shipped: Shipped.product,
-                              api: { $0.multiplying(by: $1.numerator, reducing: $2) },
-                              core: { Fraction.product($0, $1, reducing: $2) }),
-                    on: corpus.integers)
-        tally.check(Operation(name: "Int * Fraction",
-                              shipped: { Shipped.product($1, $0) },
-                              api: { a, b, _ in a.numerator * b },
-                              core: { Fraction.product($1, $0, reducing: $2) },
-                              alwaysReduces: true),
-                    on: corpus.integersFirst)
-
-        assertAgrees(tally, seed: seed)
+        checkMultiplication(Int.self, seed: 0x5EED_0000_0000_0012)
+        checkMultiplication(Int32.self, seed: 0x5EED_0000_0000_0112)
+        checkMultiplication(Int16.self, seed: 0x5EED_0000_0000_0212)
+        checkMultiplication(Int8.self, seed: 0x5EED_0000_0000_0312)
     }
 
     func testDivisionMatchesTheExactReference() throws {
         guard #available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *) else {
             throw XCTSkip("The exact reference needs Int128.")
         }
-        let seed: UInt64 = 0x5EED_0000_0000_0013
-        let corpus = corpora(seed: seed)
-        // Dividing by zero throws, or, through nonZeroDivide, is the caller's to avoid.
-        let fractions = corpus.fractions.filter { $0.1.numerator != 0 }
-        let integers = corpus.integers.filter { $0.1.numerator != 0 }
-        let integersFirst = corpus.integersFirst.filter { $0.1.numerator != 0 }
-        let reciprocal = { (fraction: Fraction) in unchecked(fraction.denominator, fraction.numerator) }
-        var tally = Tally()
-
-        tally.check(Operation(name: "divide",
-                              shipped: Shipped.quotient,
-                              api: { try! $0.dividing(by: $1, reducing: $2) },
-                              core: { Fraction.product($0, reciprocal($1), reducing: $2) }),
-                    on: fractions)
-        tally.check(Operation(name: "nonZeroDivide",
-                              shipped: Shipped.quotient,
-                              api: { $0.nonZeroDividing(by: $1, reducing: $2) },
-                              core: { Fraction.product($0, reciprocal($1), reducing: $2) }),
-                    on: fractions)
-        tally.check(Operation(name: "divide(Int)",
-                              shipped: Shipped.quotient,
-                              api: { try! $0.dividing(by: $1.numerator, reducing: $2) },
-                              core: { Fraction.product($0, reciprocal($1), reducing: $2) }),
-                    on: integers)
-        tally.check(Operation(name: "nonZeroDivide(Int)",
-                              shipped: Shipped.quotient,
-                              api: { $0.nonZeroDividing(by: $1.numerator, reducing: $2) },
-                              core: { Fraction.product($0, reciprocal($1), reducing: $2) }),
-                    on: integers)
-        tally.check(Operation(name: "Int / Fraction",
-                              shipped: Shipped.quotient,
-                              api: { a, b, _ in try! a.numerator / b },
-                              core: { Fraction.product($0, reciprocal($1), reducing: $2) },
-                              alwaysReduces: true),
-                    on: integersFirst)
-
-        assertAgrees(tally, seed: seed)
+        checkDivision(Int.self, seed: 0x5EED_0000_0000_0013)
+        checkDivision(Int32.self, seed: 0x5EED_0000_0000_0113)
+        checkDivision(Int16.self, seed: 0x5EED_0000_0000_0213)
+        checkDivision(Int8.self, seed: 0x5EED_0000_0000_0313)
     }
 }

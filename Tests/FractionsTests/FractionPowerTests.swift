@@ -130,4 +130,71 @@ class FractionPowerTests: XCTestCase {
             XCTAssertEqual(dotFactorF(dots).doubleValue, dotFactor(dots))
         }
     }
+
+    /// Negating `Int.min` used to trap, and the loop ran once per unit of the exponent, so a base
+    /// of magnitude one, whose every power fits, could not be raised to a large exponent either.
+    func testExtremeExponents() {
+        let one = Fraction.one
+        let minusOne = Fraction(verifiedNumerator: -1)
+        let minusOneBelow = Fraction(verifiedNumerator: 1, verifiedDenominator: -1)
+
+        XCTAssertEqual(one.power(of: Int.min), 1, "1 to any power is 1")
+        XCTAssertEqual(one.power(of: Int.max), 1, "1 to any power is 1")
+        XCTAssertEqual(minusOne.power(of: Int.max), -1, "-1 to an odd power is -1")
+        XCTAssertEqual(minusOne.power(of: Int.min), 1, "-1 to an even power is 1")
+
+        // Signs land where repeated multiplication and division put them: a negative exponent
+        // takes the numerator's signs from the base's denominator.
+        let odd = minusOneBelow.power(of: Int.min + 1)
+        XCTAssertEqual(odd.numerator, -1, "(1/-1)^(Int.min + 1) should be spelled -1/1")
+        XCTAssertEqual(odd.denominator, 1, "(1/-1)^(Int.min + 1) should be spelled -1/1")
+    }
+
+    /// Squaring groups the multiplications differently from repeated multiplication, but every
+    /// result must come out with identical fields, sign placement included.
+    func testPowerMatchesRepeatedMultiplication() {
+        let seed: UInt64 = 0x5EED_0000_0000_0030
+        var generator = SplitMix64(seed: seed)
+        var mismatches = 0
+        var firstMismatch: String?
+
+        for _ in 0 ..< 20_000 {
+            // Fields up to 12 and exponents up to 17 keep every result within Int: 12^17 < 2^63.
+            let base = generator.nextFraction(bound: 12)
+            let exponent = Int.random(in: -17 ... 17, using: &generator)
+
+            let actual = base.power(of: exponent)
+            let expected = repeatedPower(base, exponent)
+            if actual.numerator != expected.numerator || actual.denominator != expected.denominator {
+                mismatches += 1
+                if firstMismatch == nil {
+                    firstMismatch = "\(base) to the power \(exponent) should be \(expected), got \(actual)"
+                }
+            }
+        }
+
+        XCTAssertEqual(mismatches, 0, """
+            Disagrees with repeated multiplication on \(mismatches) of 20000 powers (seed \(seed)). \
+            First: \(firstMismatch ?? "none")
+            """)
+    }
+}
+
+/// `power(of:)` as 1.2.0 shipped it: one multiplication, or one division, per unit of the exponent.
+private func repeatedPower(_ base: Fraction, _ exponent: Int) -> Fraction {
+    if exponent == 0 { return .one }
+    if base.numerator == 0 { return .zero }
+    if exponent == 1 { return base }
+
+    var result = Fraction.one
+    if exponent > 0 {
+        for _ in 0 ..< exponent {
+            result *= base
+        }
+    } else {
+        for _ in 0 ..< -exponent {
+            result = result.nonZeroDividing(by: base)
+        }
+    }
+    return result
 }

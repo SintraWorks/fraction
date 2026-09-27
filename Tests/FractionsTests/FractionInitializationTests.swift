@@ -186,6 +186,81 @@ class FractionInitializationTests: XCTestCase {
         }
     }
 
+    /// The bound used to be 18 everywhere, but where `Int` is 32 bits wide 10 to the power 10
+    /// already overflows it, so any value from 10 to 18 passed the check and then trapped.
+    func testMaximumSignificantDigitsFollowsTheWidthOfInt() {
+        let expected = Int.bitWidth == 64 ? 18 : 9
+        XCTAssertEqual(Fraction.maximumSignificantFloatingPointDigits, expected,
+                       "10^\(expected) is the largest power of ten a \(Int.bitWidth)-bit Int holds")
+
+        // The bound itself is usable: 10^18 is the denominator.
+        let finest = Fraction(float: 0.5, significantDigits: Fraction.maximumSignificantFloatingPointDigits)
+        XCTAssertEqual(finest, Fraction(verifiedNumerator: 1, verifiedDenominator: 2), "0.5 at the finest precision should be 1/2")
+    }
+
+    /// The whole part used to be folded into the numerator as `wholes · 10^n` before reducing,
+    /// which overflowed for values as small as 1e15 at the default four digits, although the
+    /// result fits.
+    func testLargeFloatsConvertWithoutOverflowing() {
+        let quadrillion = Fraction(float: 1e15)
+        XCTAssertEqual(quadrillion.numerator, 1_000_000_000_000_000, "1e15 should be 10^15/1")
+        XCTAssertEqual(quadrillion.denominator, 1, "1e15 should be 10^15/1")
+
+        let literal: Fraction = 1e15
+        XCTAssertEqual(literal.numerator, 1_000_000_000_000_000, "The literal 1e15 should be 10^15/1")
+        XCTAssertEqual(literal.denominator, 1, "The literal 1e15 should be 10^15/1")
+
+        let withHalf = Fraction(float: 1_000_000_000_000_000.5)
+        XCTAssertEqual(withHalf.numerator, 2_000_000_000_000_001, "10^15 + 1/2 should be (2·10^15 + 1)/2")
+        XCTAssertEqual(withHalf.denominator, 2, "10^15 + 1/2 should be (2·10^15 + 1)/2")
+
+        let negative = Fraction(float: -9e18)
+        XCTAssertEqual(negative.numerator, -9_000_000_000_000_000_000, "-9e18 should be -9·10^18/1")
+        XCTAssertEqual(negative.denominator, 1, "-9e18 should be -9·10^18/1")
+    }
+
+    /// Only a value whose result does not fit is refused. `init(float:)` traps on those, so this
+    /// checks the conversion it wraps.
+    func testFloatsThatDoNotFitAreRefused() {
+        // -2^63 converts to Int.min exactly, which is outside the range.
+        for value in [1e19, -1e19, .nan, .infinity, -.infinity, -9.223372036854775808e18] {
+            XCTAssertNil(Fraction(approximating: value, significantDigits: 4), "\(value) does not fit in a Fraction")
+        }
+    }
+
+    /// Wherever 1.2.0's conversion produced a result at all, the rewritten one must produce the
+    /// same fields.
+    func testFloatConversionMatchesTheShippedImplementation() {
+        let seed: UInt64 = 0x5EED_0000_0000_0020
+        var generator = SplitMix64(seed: seed)
+        var compared = 0
+        var mismatches = 0
+        var firstMismatch: String?
+
+        for _ in 0 ..< 50_000 {
+            let digits = Int.random(in: 0 ... Fraction.maximumSignificantFloatingPointDigits, using: &generator)
+            // Magnitudes from thousandths to the edge of what the old formula could fold.
+            let magnitude = pow(10.0, Double.random(in: -3 ... 18.9, using: &generator))
+            let value = Double.random(in: -magnitude ... magnitude, using: &generator)
+            guard let expected = shippedConversion(value, significantDigits: digits) else { continue }
+
+            compared += 1
+            let actual = Fraction(float: value, significantDigits: digits)
+            if actual.numerator != expected.numerator || actual.denominator != expected.denominator {
+                mismatches += 1
+                if firstMismatch == nil {
+                    firstMismatch = "\(value) at \(digits) digits should be \(expected), got \(actual)"
+                }
+            }
+        }
+
+        XCTAssertGreaterThan(compared, 10_000, "Most of the corpus should lie within the old formula's range")
+        XCTAssertEqual(mismatches, 0, """
+            Disagrees with the shipped conversion on \(mismatches) of \(compared) values (seed \(seed)). \
+            First: \(firstMismatch ?? "none")
+            """)
+    }
+
     // Values with a whole part and a sign go through the same path.
     func testInitFromFloatWithWholePartAndSign() {
         XCTAssertEqual(Fraction(float: 3.9), Fraction(verifiedNumerator: 39, verifiedDenominator: 10), "3.9 should be 39/10, got \(Fraction(float: 3.9))")
@@ -218,4 +293,18 @@ class FractionInitializationTests: XCTestCase {
         XCTAssertEqual(negativeWholes?.numerator, -5, "-3 + 1/2 is -5/2")
         XCTAssertEqual(negativeWholes?.denominator, 2, "-3 + 1/2 is -5/2")
     }
+}
+
+/// Floating-point conversion as 1.2.0 shipped it, with overflow reported instead of trapped on:
+/// `nil` wherever the shipped version trapped.
+private func shippedConversion(_ float: Double, significantDigits: Int) -> Fraction? {
+    guard let multiplier = Int(exactly: float.rounded(.towardZero)) else { return nil }
+    let operand = float - Double(multiplier)
+    let divisor = pow(10.0, Double(significantDigits))
+    let fractionInt = Int((operand * divisor).rounded())
+
+    let (offset, offsetOverflowed) = Int(divisor).multipliedReportingOverflow(by: multiplier)
+    let (numerator, sumOverflowed) = fractionInt.addingReportingOverflow(offset)
+    guard !offsetOverflowed, !sumOverflowed, numerator != .min else { return nil }
+    return Fraction(verifiedNumerator: numerator, verifiedDenominator: Int(divisor)).reduced()
 }
