@@ -469,7 +469,7 @@ public struct Fraction: Codable, Sendable {
     ///   - reducing: A flag indicating whether to reduce the result of the division to its GCD. Defaults to `true`.
     public mutating func nonZeroDivide(by integer: Int, reducing: Bool = true) {
         let other = Fraction(numerator: integer, denominator: 1)!
-        return nonZeroDivide(by: other)
+        nonZeroDivide(by: other, reducing: reducing)
     }
 
     /// Divide a copy of `self` by another Fraction and return the result.

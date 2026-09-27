@@ -125,4 +125,16 @@ class FractionDivisionTests: XCTestCase {
         XCTAssertEqual(result.numerator, 2)
         XCTAssertEqual(result.denominator, 9)
     }
+
+    /// The mutating variant used to drop `reducing` and always reduce.
+    func testNonzeroDivideByIntegerWithoutReducing() {
+        var fraction = Fraction(verifiedNumerator: 12, verifiedDenominator: 18)
+        fraction.nonZeroDivide(by: 3, reducing: false)
+        XCTAssertEqual(fraction.numerator, 12, "12/18 divided by 3 without reducing should be 12/54")
+        XCTAssertEqual(fraction.denominator, 54, "12/18 divided by 3 without reducing should be 12/54")
+
+        let result = Fraction(verifiedNumerator: 12, verifiedDenominator: 18).nonZeroDividing(by: 3, reducing: false)
+        XCTAssertEqual(result.numerator, 12, "12/18 divided by 3 without reducing should be 12/54")
+        XCTAssertEqual(result.denominator, 54, "12/18 divided by 3 without reducing should be 12/54")
+    }
 }
