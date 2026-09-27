@@ -126,6 +126,16 @@ let equalCorpus: [Fraction] = corpus.map { fraction in
                     verifiedDenominator: fraction.denominator * scale)
 }
 
+/// Fractions whose sums all take the exact path: power-of-two denominators of 2^32 and up, so
+/// the fast path's product of two of them overflows, while every sum fits once reduced. Odd
+/// numerators keep each fraction in lowest terms.
+let exactPathCorpus: [Fraction] = (0 ..< count).map { _ in
+    let numerator = Int.random(in: 1 ... 4096, using: &generator) | 1
+    let exponent = Int.random(in: 32 ... 62, using: &generator)
+    return Fraction(verifiedNumerator: Bool.random(using: &generator) ? -numerator : numerator,
+                    verifiedDenominator: 1 << exponent)
+}
+
 // MARK: - Scans
 //
 // Each scan is `@inline(never)` and takes the round number as its starting index. Without that,
@@ -296,6 +306,10 @@ measure("hashValue (control)", operations: count) { round in
 
 measure("+", operations: count) { round in
     blackHole(additionScan(corpus, from: round))
+}
+
+measure("+ (exact path)", operations: count) { round in
+    blackHole(additionScan(exactPathCorpus, from: round))
 }
 
 measure("+ Int", operations: count) { round in

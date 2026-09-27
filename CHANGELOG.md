@@ -7,10 +7,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Arithmetic now traps only when its result does not fit in a `Fraction`. It used to trap as soon as
+an intermediate product overflowed `Int`, however small the answer: `1/2^40 + 1/2^41` crashed,
+although the answer is `3/2^41`. Nothing that worked before returns anything different.
+
 ### Fixed
 
+- Addition, subtraction, multiplication and division, of fractions and of integers, no longer trap
+  when an intermediate value overflows `Int` but the result fits. Each operation still runs as
+  before; only if that overflows does it work the result out exactly, cancelling common factors
+  first (Knuth, TAOCP vol. 2, §4.5.1) and carrying the one sum that can outgrow `Int` across two
+  words. Every result that did not trap before is unchanged, sign placement included.
+- A result that lands on `Int.min`, which is outside the range, now traps in the operation that
+  produces it. It used to be returned, only to trap in whatever touched it next:
+  `Fraction(verifiedNumerator: -(1 << 62), verifiedDenominator: -1) - Fraction(verifiedNumerator: 1 << 62, verifiedDenominator: -1)`
+  is 2^63, which does not fit, yet it returned `Int.min/-1`, and adding 1 to that trapped.
+- An integer operand of `Int.min` now works wherever the result fits. Dividing by it, and
+  `Int.min - fraction` and `Int.min / fraction`, went through the failable initializer, which
+  rejects `Int.min`, and so crashed on a force unwrap whatever the result.
 - `nonZeroDivide(by:reducing:)` taking an `Int` ignored `reducing` and always reduced. The
   non-mutating `nonZeroDividing(by:reducing:)` was not affected.
+
+### Added
+
+- Arithmetic in the `FractionsBenchmarks` target: `+`, `+ Int`, `-`, `*` and `/` on the benchmark
+  corpus, and `+` on a corpus whose every sum takes the exact path. Arithmetic that does not
+  overflow costs what it did before, to within 2%. The exact path costs about 2.4 times as much,
+  and runs only where arithmetic used to trap.
+- Property-based tests checking every arithmetic operation, with and without reducing, against the
+  1.2.0 formulas evaluated exactly in `Int128`: about 40,000 seeded pairs per operation, weighted
+  towards the edges of `Int`.
+
+### Upgrading
+
+Nothing is source-breaking. Three behaviours change, each of them a trap or a bug before:
+
+- Arithmetic that trapped on an intermediate overflow now returns its result.
+- A result landing on `Int.min` traps in the operation that produces it, rather than in a later one.
+- `nonZeroDivide(by:reducing:)` with an `Int` and `reducing: false` no longer reduces.
 
 ## [1.2.0] - 2026-09-21
 
