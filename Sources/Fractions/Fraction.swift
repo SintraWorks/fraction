@@ -76,6 +76,21 @@ public struct Fraction: Codable, Sendable {
     /// use from any concurrency domain and cannot change the meaning of a conversion elsewhere.
     public static let defaultSignificantFloatingPointDigits = 4
 
+    /// The most fraction digits `init(float:significantDigits:)` can preserve: 18 where `Int` is
+    /// 64 bits wide, and 9 where it is 32, as on arm64_32 watchOS.
+    ///
+    /// Preserving `n` digits takes a denominator of 10 to the power `n`, so this is the exponent
+    /// of the largest power of ten `Int` can hold.
+    public static let maximumSignificantFloatingPointDigits: Int = {
+        var digits = 0
+        var power = 1
+        while power <= Int.max / 10 {
+            power *= 10
+            digits += 1
+        }
+        return digits
+    }()
+
     public enum FractionError: Error {
         case illegalNumerator
         case illegalDenominator
@@ -182,17 +197,19 @@ public struct Fraction: Codable, Sendable {
     /// Initialize a fraction from a floating point value.
     /// - Parameter float: The value to convert.
     /// - Parameter significantDigits: How many fraction digits of `float` to preserve
-    ///   (valid range: 0 ... 18). Defaults to `defaultSignificantFloatingPointDigits`.
+    ///   (valid range: 0 ... `maximumSignificantFloatingPointDigits`, which is 18 where `Int` is
+    ///   64 bits wide). Defaults to `defaultSignificantFloatingPointDigits`.
     ///
     /// The conversion is exact only for values whose fractional part terminates within
     /// `significantDigits` decimal places; anything longer is rounded. `0.5` converts to `1/2`,
     /// while at the default precision `0.123456789` converts to `247/2000`.
     ///
-    /// - Note: The upper bound of 18 is the largest power of ten that fits in an `Int`; a higher
-    ///   value would overflow while computing the denominator.
+    /// - Note: The upper bound is the exponent of the largest power of ten that fits in an `Int`;
+    ///   a higher value would overflow while computing the denominator.
     public init(float: FloatLiteralType, significantDigits: Int = Fraction.defaultSignificantFloatingPointDigits) {
+        let maximum = Fraction.maximumSignificantFloatingPointDigits
         precondition(significantDigits >= 0, "significantDigits may not be negative, got \(significantDigits)")
-        precondition(significantDigits <= 18, "significantDigits may not exceed 18, as 10 to the power of 19 overflows Int, got \(significantDigits)")
+        precondition(significantDigits <= maximum, "significantDigits may not exceed \(maximum), as 10 to the power of \(maximum + 1) overflows Int, got \(significantDigits)")
 
         let multiplier: Int = Int(float)
         let operand = float - FloatLiteralType(multiplier)

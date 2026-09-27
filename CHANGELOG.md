@@ -27,8 +27,14 @@ although the answer is `3/2^41`. Nothing that worked before returns anything dif
   rejects `Int.min`, and so crashed on a force unwrap whatever the result.
 - `nonZeroDivide(by:reducing:)` taking an `Int` ignored `reducing` and always reduced. The
   non-mutating `nonZeroDividing(by:reducing:)` was not affected.
+- `init(float:significantDigits:)` accepted up to 18 digits everywhere, but where `Int` is 32 bits
+  wide, as on arm64_32 watchOS, 10 to the power 10 already overflows it: 10 to 18 digits passed the
+  check and then trapped. The bound now follows the width of `Int`.
 
 ### Added
+
+- `maximumSignificantFloatingPointDigits`, the upper bound of `significantDigits`: 18 where `Int` is
+  64 bits wide, 9 where it is 32.
 
 - Arithmetic in the `FractionsBenchmarks` target: `+`, `+ Int`, `-`, `*` and `/` on the benchmark
   corpus, and `+` on a corpus whose every sum takes the exact path. Arithmetic that does not

@@ -186,6 +186,18 @@ class FractionInitializationTests: XCTestCase {
         }
     }
 
+    /// The bound used to be 18 everywhere, but where `Int` is 32 bits wide 10 to the power 10
+    /// already overflows it, so any value from 10 to 18 passed the check and then trapped.
+    func testMaximumSignificantDigitsFollowsTheWidthOfInt() {
+        let expected = Int.bitWidth == 64 ? 18 : 9
+        XCTAssertEqual(Fraction.maximumSignificantFloatingPointDigits, expected,
+                       "10^\(expected) is the largest power of ten a \(Int.bitWidth)-bit Int holds")
+
+        // The bound itself is usable: 10^18 is the denominator.
+        let finest = Fraction(float: 0.5, significantDigits: Fraction.maximumSignificantFloatingPointDigits)
+        XCTAssertEqual(finest, Fraction(verifiedNumerator: 1, verifiedDenominator: 2), "0.5 at the finest precision should be 1/2")
+    }
+
     // Values with a whole part and a sign go through the same path.
     func testInitFromFloatWithWholePartAndSign() {
         XCTAssertEqual(Fraction(float: 3.9), Fraction(verifiedNumerator: 39, verifiedDenominator: 10), "3.9 should be 39/10, got \(Fraction(float: 3.9))")
