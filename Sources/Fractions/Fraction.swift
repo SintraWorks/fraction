@@ -30,6 +30,22 @@ import math_h
 /// Everything a fraction can do is documented on ``Rational``, which this is a specialization of.
 public typealias Fraction = Rational<Int>
 
+/// A fraction whose numerator and denominator are `Int128`s, for results that outgrow a
+/// ``Fraction``.
+///
+/// Each field holds up to 127 bits, where a `Fraction`'s holds 63. It does everything a `Fraction`
+/// does, and converts to and from one with `init(_:)` and `init?(exactly:)`.
+///
+/// Encoded, each field is a number when it fits in 64 bits, so an everyday value encodes exactly
+/// as a `Fraction` does and either type can decode the other's data, and a decimal string when it
+/// does not. JSON and property lists can both carry that; `PropertyListEncoder` could not encode
+/// an `Int128` itself.
+///
+/// `Int128` arrived with macOS 15, iOS 18, watchOS 11, tvOS 18 and visionOS 2, hence the
+/// availability. A `Fraction` works everywhere it always has.
+@available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *)
+public typealias Fraction128 = Rational<Int128>
+
 /// The errors a fraction's throwing initializers and operations raise, whatever its integer type.
 public enum FractionError: Error {
     case illegalNumerator
@@ -41,7 +57,7 @@ public enum FractionError: Error {
 /**
     Rational is a value type that represents the quotient of two integers (like `1/3`), without loss of precision, and with support for basic arithmetic operations.
 
-    The numerator and denominator are of the integer type `Integer`, which decides how large either can grow. ``Fraction`` is `Rational<Int>`.
+    The numerator and denominator are of the integer type `Integer`, which decides how large either can grow. ``Fraction`` is `Rational<Int>`, and ``Fraction128``, for results that outgrow it, is `Rational<Int128>`.
 
     The standard initializer is failable. This is because both passing in 0 (for the denominator) and passing in `Integer.min` are illegal. But it can be inconvenient to have to either unwrap or force unwrap all the time when initializing many
     fractions. Therefore the type also provides guaranteed initializers. These will produce non-optional fractions, but if you pass in one of the two illegal values your code will crash.
@@ -226,8 +242,14 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
         guard let scale = Rational.powerOfTen(significantDigits),
               let wholes = Integer(exactly: float.rounded(.towardZero))
         else { return nil }
+        // 10^22 is the largest power of ten a Double holds exactly, and already past the 17 or so
+        // digits a Double carries at all. So scale by at most that in floating point, where an
+        // inexact scale would turn even 0.5 into something not quite 1/2, and multiply any further
+        // digits in as zeros. Only an `Integer` wider than 64 bits allows more than 22 digits.
+        let exactDigits = Swift.min(significantDigits, 22)
         // The fractional part is below 1 in magnitude, so its digits never exceed 10^n.
-        let digits = Integer(((float - Double(wholes)) * pow(10.0, Double(significantDigits))).rounded())
+        let digits = Integer(((float - Double(wholes)) * pow(10.0, Double(exactDigits))).rounded())
+            * Rational.powerOfTen(significantDigits - exactDigits)!
 
         guard let result = Rational.sum(Rational(uncheckedNumerator: digits, denominator: scale),
                                         Rational(uncheckedNumerator: wholes, denominator: 1),
@@ -255,6 +277,10 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// negating, and so avoid trapping on `Integer.min`. Returns 0 only when both arguments are 0.
     @inlinable
     static func greatestCommonDivisor(_ a: Integer.Magnitude, _ b: Integer.Magnitude) -> Integer.Magnitude {
+        if Integer.Magnitude.bitWidth > UInt64.bitWidth {
+            return wideGreatestCommonDivisor(a, b)
+        }
+
         var u = a
         var v = b
 
@@ -263,6 +289,58 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
         }
 
         return u
+    }
+
+    /// The greatest common divisor where `Integer` is wider than 64 bits, and so its division runs
+    /// in software, several times slower than the hardware's.
+    ///
+    /// Stein's binary algorithm, which needs only shifts and subtractions, works the values down
+    /// until the smaller fits in 64 bits. Then one division brings the larger below it too, and
+    /// Euclid finishes in hardware.
+    @inlinable
+    static func wideGreatestCommonDivisor(_ a: Integer.Magnitude, _ b: Integer.Magnitude) -> Integer.Magnitude {
+        if a == 0 { return b }
+        if b == 0 { return a }
+
+        // gcd(2^i·u, 2^j·v) = 2^min(i, j) · gcd(u, v), and from here on u and v are odd.
+        let shift = (a | b).trailingZeroBitCount
+        var u = a >> a.trailingZeroBitCount
+        var v = b >> b.trailingZeroBitCount
+
+        while true {
+            if u > v { swap(&u, &v) }
+            if let narrowU = UInt64(exactly: u) {
+                // gcd(u, v) = gcd(u, v mod u), and v mod u is below u, so both now fit.
+                let remainder = UInt64(truncatingIfNeeded: v % u)
+                return Integer.Magnitude(Rational<Int64>.greatestCommonDivisor(narrowU, remainder)) << shift
+            }
+            // gcd(u, v) = gcd(u, v - u), and v - u of two odd values is even: shift it odd again.
+            v -= u
+            if v == 0 { return u << shift }
+            v >>= v.trailingZeroBitCount
+        }
+    }
+
+    /// Both magnitudes divided by their greatest common divisor; `nil` for 0 and 0, which have
+    /// none.
+    ///
+    /// Division wider than a machine word runs in software, several times slower than the
+    /// hardware's. So where `Integer` is wider than 64 bits, a pair that fits in 64 bits is reduced
+    /// in 64 bits, which is what keeps a `Fraction128` holding everyday values nearly as fast as a
+    /// `Fraction`. The test is on a constant, so narrower types do not pay for it.
+    @inlinable
+    static func lowestTerms(_ numerator: Integer.Magnitude, _ denominator: Integer.Magnitude)
+        -> (numerator: Integer.Magnitude, denominator: Integer.Magnitude)? {
+        if Integer.Magnitude.bitWidth > UInt64.bitWidth,
+           let narrowNumerator = UInt64(exactly: numerator),
+           let narrowDenominator = UInt64(exactly: denominator) {
+            guard let narrow = Rational<Int64>.lowestTerms(narrowNumerator, narrowDenominator) else { return nil }
+            return (Integer.Magnitude(narrow.numerator), Integer.Magnitude(narrow.denominator))
+        }
+
+        let divisor = greatestCommonDivisor(numerator, denominator)
+        guard divisor != 0 else { return nil }
+        return (numerator / divisor, denominator / divisor)
     }
 
     /// Reduce a fraction to its Greatest Common Denominator.
@@ -275,21 +353,14 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// initializer produces — is left alone rather than dividing by zero.
     @inlinable
     public mutating func reduce() {
-        let numeratorMagnitude = numerator.magnitude
-        let denominatorMagnitude = denominator.magnitude
-
-        let divisor = Rational.greatestCommonDivisor(numeratorMagnitude, denominatorMagnitude)
-        guard divisor != 0 else { return }
-
-        let reducedNumerator = numeratorMagnitude / divisor
-        let reducedDenominator = denominatorMagnitude / divisor
+        guard let reduced = Rational.lowestTerms(numerator.magnitude, denominator.magnitude) else { return }
 
         // The largest magnitude, one more than `Integer.max`, can only have come from
         // `Integer.min`, which is negative and so takes the negating branch back to `Integer.min`
         // exactly. Every other magnitude is at most `Integer.max`. So neither branch can produce a
         // value `Integer` cannot represent.
-        numerator = numerator < 0 ? Integer(truncatingIfNeeded: 0 &- reducedNumerator) : Integer(truncatingIfNeeded: reducedNumerator)
-        denominator = denominator < 0 ? Integer(truncatingIfNeeded: 0 &- reducedDenominator) : Integer(truncatingIfNeeded: reducedDenominator)
+        numerator = numerator < 0 ? Integer(truncatingIfNeeded: 0 &- reduced.numerator) : Integer(truncatingIfNeeded: reduced.numerator)
+        denominator = denominator < 0 ? Integer(truncatingIfNeeded: 0 &- reduced.denominator) : Integer(truncatingIfNeeded: reduced.denominator)
     }
 
     /// Returns a new fraction representing the reduction of the receiver to its Greatest Common Denominator
@@ -747,8 +818,8 @@ extension Rational: Codable where Integer: Codable {
     public init(from decoder: Decoder) throws {
         do {
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            numerator = try container.decode(Integer.self, forKey: .numerator)
-            denominator = try container.decode(Integer.self, forKey: .denominator)
+            numerator = try Rational.decodeField(.numerator, from: container)
+            denominator = try Rational.decodeField(.denominator, from: container)
             if numerator == Integer.min { throw FractionError.illegalNumerator }
             if denominator == 0 || denominator == Integer.min { throw FractionError.illegalDenominator }
         } catch let error where !(error is FractionError)  {
@@ -764,10 +835,91 @@ extension Rational: Codable where Integer: Codable {
         }
     }
 
+    /// Encodes each field as a number when it fits in 64 bits, and as a decimal string when it
+    /// does not.
+    ///
+    /// A `Fraction` therefore encodes exactly as it always has, and a `Fraction128` holding an
+    /// everyday value encodes exactly as a `Fraction` does, so either can decode the other's data.
+    /// A string carries what no 64-bit number can, in JSON and property lists alike, which
+    /// matters because `PropertyListEncoder` cannot encode an `Int128` at all.
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(numerator, forKey: .numerator)
-        try container.encode(denominator, forKey: .denominator)
+        try Rational.encodeField(numerator, forKey: .numerator, into: &container)
+        try Rational.encodeField(denominator, forKey: .denominator, into: &container)
+    }
+
+    static func encodeField(_ value: Integer, forKey key: CodingKeys,
+                            into container: inout KeyedEncodingContainer<CodingKeys>) throws {
+        if let word = Int(exactly: value) {
+            try container.encode(word, forKey: key)
+        } else if let wide = Int64(exactly: value) {
+            // Reached only where `Int` is narrower than 64 bits.
+            try container.encode(wide, forKey: key)
+        } else {
+            try container.encode(String(value), forKey: key)
+        }
+    }
+
+    /// A field however it was written: as a number the decoder reads natively, as a 64-bit
+    /// number, or as a decimal string.
+    static func decodeField(_ key: CodingKeys, from container: KeyedDecodingContainer<CodingKeys>) throws -> Integer {
+        do {
+            return try container.decode(Integer.self, forKey: key)
+        } catch let nativeError {
+            // Not every decoder reads every width natively, `PropertyListDecoder` has no `Int128`,
+            // and a field too wide for 64 bits was encoded as a string.
+            if let wide = try? container.decode(Int64.self, forKey: key), let value = Integer(exactly: wide) {
+                return value
+            }
+            if let text = try? container.decode(String.self, forKey: key) {
+                guard let value = Integer(text) else {
+                    throw DecodingError.dataCorruptedError(forKey: key, in: container,
+                                                           debugDescription: "\"\(text)\" is not an integer that fits in \(Integer.self)")
+                }
+                return value
+            }
+            throw nativeError
+        }
+    }
+}
+
+// MARK: - Converting between integer types
+
+extension Rational {
+    /// A fraction of another integer type as a fraction of this one: with the same fields when
+    /// they fit, and otherwise in lowest terms, which may fit where the fields as written did not.
+    /// Traps if neither fits; see `init?(exactly:)` to find out first.
+    ///
+    /// Widening, as from a `Fraction` to a `Fraction128`, always succeeds and keeps the fields as
+    /// written.
+    @inlinable
+    public init<Other>(_ other: Rational<Other>) {
+        guard let converted = Rational(exactly: other) else {
+            preconditionFailure("\(other) does not fit in a fraction of \(Integer.self)")
+        }
+        self = converted
+    }
+
+    /// A fraction of another integer type as a fraction of this one: with the same fields when
+    /// they fit, and otherwise in lowest terms; `nil` if neither fits.
+    @inlinable
+    public init?<Other>(exactly other: Rational<Other>) {
+        if let converted = Rational(fieldsOf: other) {
+            self = converted
+        } else if let converted = Rational(fieldsOf: other.reduced()) {
+            self = converted
+        } else {
+            return nil
+        }
+    }
+
+    /// `other`'s fields, unchanged, if both fit in `Integer.min + 1 ... Integer.max`.
+    @inlinable
+    init?<Other>(fieldsOf other: Rational<Other>) {
+        guard let numerator = Integer(exactly: other.numerator), numerator != .min,
+              let denominator = Integer(exactly: other.denominator), denominator != .min
+        else { return nil }
+        self.init(uncheckedNumerator: numerator, denominator: denominator)
     }
 }
 

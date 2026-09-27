@@ -199,9 +199,8 @@ extension Rational.Term {
     /// The same value in lowest terms.
     @inlinable
     var reduced: Rational.Term {
-        let divisor = Rational.greatestCommonDivisor(numerator, denominator)
-        guard divisor > 1 else { return self }
-        return Rational.Term(isNegative: isNegative, numerator: numerator / divisor, denominator: denominator / divisor)
+        guard let reduced = Rational.lowestTerms(numerator, denominator) else { return self }
+        return Rational.Term(isNegative: isNegative, numerator: reduced.numerator, denominator: reduced.denominator)
     }
 
     /// `x + y` in lowest terms, or `nil` if either of its magnitudes exceeds `Integer.max`.

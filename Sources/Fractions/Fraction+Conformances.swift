@@ -45,27 +45,22 @@ extension Rational: Hashable {
     /// on magnitudes, so a field holding `Integer.min` does not trap.
     @inlinable
     public func hash(into hasher: inout Hasher) {
-        let numeratorMagnitude = numerator.magnitude
-        let denominatorMagnitude = denominator.magnitude
-        let divisor = Rational.greatestCommonDivisor(numeratorMagnitude, denominatorMagnitude)
-
         // Only 0/0 has no canonical form, and no initializer produces it. Hash it as a constant
         // rather than dividing by zero.
-        guard divisor != 0 else {
+        guard let canonical = Rational.lowestTerms(numerator.magnitude, denominator.magnitude) else {
             hasher.combine(Integer.zero)
             hasher.combine(Integer.Magnitude.zero)
             return
         }
 
-        let reducedNumerator = numeratorMagnitude / divisor
         // A negative sign belongs on the numerator, and zero has no sign, so `0/5` and `0/-5`
         // agree. Negating the largest magnitude, `Integer.max + 1`, lands on `Integer.min`, which
         // is exactly the value a canonical numerator of that size has to take, so this is always
         // representable.
         let isNegative = (numerator < 0) != (denominator < 0)
-        hasher.combine(isNegative ? Integer(truncatingIfNeeded: 0 &- reducedNumerator) : Integer(truncatingIfNeeded: reducedNumerator))
+        hasher.combine(isNegative ? Integer(truncatingIfNeeded: 0 &- canonical.numerator) : Integer(truncatingIfNeeded: canonical.numerator))
         // The canonical denominator is positive by construction, so it is hashed as a magnitude.
-        hasher.combine(denominatorMagnitude / divisor)
+        hasher.combine(canonical.denominator)
     }
 }
 

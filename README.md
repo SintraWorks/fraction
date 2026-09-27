@@ -17,7 +17,7 @@ Comparison is by value, not by spelling: a fraction remembers how it was written
         f1.add(f2) // mutating, f1 now holds the result of the addition
         let result1 = f1.adding(f2) // non-mutating
         let result2 = f1 + f2 // non-mutating
-        let f1 += f2 // mutating, f1 now holds the result of the addition
+        f1 += f2 // mutating, f1 now holds the result of the addition
 
 By default arithmetic operations will reduce the result to its **Greatest Common Denominator**. The function based variants allow turning off this behaviour by explicitly forbidding reduction:
 
@@ -26,6 +26,25 @@ By default arithmetic operations will reduce the result to its **Greatest Common
 Arithmetic on a Fraction traps only when its result does not fit: when the result's numerator or denominator falls outside `Int.min + 1 ... Int.max`. Results are in lowest terms unless you pass `reducing: false`, and then it is the unreduced result that has to fit. Intermediate values never cause a trap: `1/2^40 + 1/2^41` is `3/2^41`, although the product of the two denominators is far beyond `Int`. Comparing and hashing fractions never trap either: they carry their products at full width.
 
 Release-by-release changes are recorded in [CHANGELOG.md](CHANGELOG.md).
+
+## Fractions beyond 64 bits
+
+A `Fraction` holds numerators and denominators of up to 63 bits. For results that outgrow that, use a `Fraction128`, which holds up to 127 bits in each and otherwise works exactly as a `Fraction` does:
+
+    let largest: Fraction128 = 170141183460469231731687303715884105727   // Int128.max
+    let third = Fraction128(verifiedNumerator: 1, verifiedDenominator: 3)
+    let product = largest * third
+
+Both are the same generic type, `Rational`, over different integers: `Fraction` is `Rational<Int>`, and `Fraction128` is `Rational<Int128>`. A `Fraction128` needs Swift's `Int128`, and so macOS 15, iOS 18, watchOS 11, tvOS 18 or visionOS 2; on Linux it is always available. A `Fraction` works everywhere it always has.
+
+Convert between the two with `init(_:)`, which traps if the value does not fit, or `init?(exactly:)`, which returns `nil` instead. Widening always fits, and keeps the fields as written:
+
+    let wide = Fraction128(fraction)                 // always succeeds
+    let narrow = Fraction(exactly: wideFraction)      // nil if the value does not fit
+
+Encoded, a `Fraction128` writes each field as a number when it fits in 64 bits, exactly as a `Fraction` does, and as a decimal string when it does not. So either type decodes the other's data wherever the values fit, and both JSON and property lists can carry any `Fraction128`; `PropertyListEncoder` cannot encode an `Int128` itself.
+
+A `Fraction128` holding everyday values costs 1.2 to 1.4 times what a `Fraction` does, and comparing costs twice as much. Arithmetic whose results reach well past 64 bits costs more, about six times as much as everyday arithmetic on a `Fraction` in the package's benchmark, as 128-bit division runs in software.
 
 ## Using **Fractions** in your project
 

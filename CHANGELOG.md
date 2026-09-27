@@ -7,8 +7,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Arithmetic now traps only when its result does not fit in a `Fraction`. It used to trap as soon as
-an intermediate product overflowed `Int`, however small the answer: `1/2^40 + 1/2^41` crashed,
+`Fraction128` holds numerators and denominators of up to 127 bits, for results that outgrow a
+`Fraction`. And arithmetic now traps only when its result does not fit: it used to trap as soon as
+an intermediate product overflowed `Int`, however small the answer, so `1/2^40 + 1/2^41` crashed,
 although the answer is `3/2^41`. Nothing that worked before returns anything different.
 
 ### Fixed
@@ -51,20 +52,36 @@ although the answer is `3/2^41`. Nothing that worked before returns anything dif
 - The hot paths are `@inlinable`, so a dependent compiles them specialized for its own types.
   Without that, generic code called from another module runs unspecialized, which in a prototype
   made `reduce()` 16 times slower. In the benchmark every operation costs what it did, to within 3%,
-  and subtraction, multiplication, division and adding an integer are 6 to 9% faster.
+  except the exact path, which is 5% slower; and subtraction, multiplication, division and adding an
+  integer are 6 to 9% faster.
 
 ### Added
 
+- `Fraction128`, a fraction whose numerator and denominator are `Int128`s: up to 127 bits each,
+  where a `Fraction`'s hold 63, and otherwise the same API. It needs `Int128`, so macOS 15, iOS 18,
+  watchOS 11, tvOS 18 or visionOS 2, or any Linux. On everyday values it costs 1.2 to 1.4 times what
+  a `Fraction` does, and comparing twice as much; results well past 64 bits cost about six times as
+  much as everyday `Fraction` arithmetic, as 128-bit division runs in software.
+- `init(_:)` and `init?(exactly:)`, converting between `Fraction` and `Fraction128`, or any two
+  widths of `Rational`: with the fields as written when they fit, and otherwise in lowest terms.
+  `init(_:)` traps where `init?(exactly:)` returns `nil`.
+- Each field is encoded as a number when it fits in 64 bits, and as a decimal string when it does
+  not, and decodes from either. A `Fraction` encodes exactly as it did, and a `Fraction128` holding
+  an everyday value encodes identically, so either type decodes the other's data wherever the
+  values fit. The strings are what let property lists carry any `Fraction128`:
+  `PropertyListEncoder` cannot encode an `Int128` itself.
 - `maximumSignificantFloatingPointDigits`, the upper bound of `significantDigits`: 18 where `Int` is
-  64 bits wide, 9 where it is 32.
-
+  64 bits wide, 9 where it is 32, and 38 for a `Fraction128`.
 - Arithmetic in the `FractionsBenchmarks` target: `+`, `+ Int`, `-`, `*` and `/` on the benchmark
   corpus, and `+` on a corpus whose every sum takes the exact path. Arithmetic that does not
   overflow costs what it did before, to within 2%. The exact path costs about 2.4 times as much,
-  and runs only where arithmetic used to trap.
+  and runs only where arithmetic used to trap. The same measurements for `Fraction128`, and on
+  fields of about 60 bits, whose products run past 120.
 - Property-based tests checking every arithmetic operation, with and without reducing, against the
-  1.2.0 formulas evaluated exactly in `Int128`: about 40,000 seeded pairs per operation, weighted
-  towards the edges of `Int`.
+  1.2.0 formulas evaluated exactly in `Int128`, at 8, 16, 32 and 64 bits: 40,000 seeded pairs per
+  operation for `Fraction`, and 10,000 at each narrower width, where nearly every operation meets an
+  edge. `Fraction128` is checked across its full range against a separate 256-bit check, which
+  multiplies every result back out and proves every refusal.
 
 ### Upgrading
 

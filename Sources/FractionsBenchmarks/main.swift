@@ -146,10 +146,10 @@ let exactPathCorpus: [Fraction] = (0 ..< count).map { _ in
 // per-round argument makes the seven calls genuinely different, so each one has to run.
 
 @inline(never)
-func reductionScan(_ fractions: [Fraction], from start: Int) -> Int {
+func reductionScan<Integer>(_ fractions: [Rational<Integer>], from start: Int) -> Int {
     var checksum = 0
     for index in start ..< fractions.count {
-        checksum = checksum &+ fractions[index].reduced().normalized().numerator
+        checksum = checksum &+ Int(truncatingIfNeeded: fractions[index].reduced().normalized().numerator)
     }
     return checksum
 }
@@ -157,7 +157,7 @@ func reductionScan(_ fractions: [Fraction], from start: Int) -> Int {
 /// A running minimum: the loop-carried dependency on `smallest` also stops the comparisons being
 /// vectorized, so this is one real comparison per element.
 @inline(never)
-func orderingScan(_ fractions: [Fraction], from start: Int) -> Fraction {
+func orderingScan<Integer>(_ fractions: [Rational<Integer>], from start: Int) -> Rational<Integer> {
     var smallest = fractions[start]
     for index in (start + 1) ..< fractions.count where fractions[index] < smallest {
         smallest = fractions[index]
@@ -168,7 +168,7 @@ func orderingScan(_ fractions: [Fraction], from start: Int) -> Fraction {
 /// Every pair compared here is equal but differently spelled — the case `==` exists to get right,
 /// and the one that cannot be answered without doing the work.
 @inline(never)
-func equalityScan(_ fractions: [Fraction], _ equalForms: [Fraction], from start: Int) -> Int {
+func equalityScan<Integer>(_ fractions: [Rational<Integer>], _ equalForms: [Rational<Integer>], from start: Int) -> Int {
     var checksum = 0
     for index in start ..< fractions.count where fractions[index] == equalForms[index] {
         checksum = checksum &+ 1
@@ -177,7 +177,7 @@ func equalityScan(_ fractions: [Fraction], _ equalForms: [Fraction], from start:
 }
 
 @inline(never)
-func hashScan(_ fractions: [Fraction], from start: Int) -> Int {
+func hashScan<Integer>(_ fractions: [Rational<Integer>], from start: Int) -> Int {
     var checksum = 0
     for index in start ..< fractions.count {
         checksum = checksum &+ fractions[index].hashValue
@@ -201,47 +201,47 @@ func controlHashScan(_ pairs: [IntPair], from start: Int) -> Int {
 // ordinary use, reduction included.
 
 @inline(never)
-func additionScan(_ fractions: [Fraction], from start: Int) -> Int {
+func additionScan<Integer>(_ fractions: [Rational<Integer>], from start: Int) -> Int {
     var checksum = 0
     for index in start ..< fractions.count - 1 {
-        checksum = checksum &+ (fractions[index] + fractions[index + 1]).denominator
+        checksum = checksum &+ Int(truncatingIfNeeded: (fractions[index] + fractions[index + 1]).denominator)
     }
     return checksum
 }
 
 @inline(never)
-func integerAdditionScan(_ fractions: [Fraction], from start: Int) -> Int {
+func integerAdditionScan<Integer>(_ fractions: [Rational<Integer>], from start: Int) -> Int {
     var checksum = 0
     for index in start ..< fractions.count - 1 {
-        checksum = checksum &+ (fractions[index] + fractions[index + 1].numerator).denominator
+        checksum = checksum &+ Int(truncatingIfNeeded: (fractions[index] + fractions[index + 1].numerator).denominator)
     }
     return checksum
 }
 
 @inline(never)
-func subtractionScan(_ fractions: [Fraction], from start: Int) -> Int {
+func subtractionScan<Integer>(_ fractions: [Rational<Integer>], from start: Int) -> Int {
     var checksum = 0
     for index in start ..< fractions.count - 1 {
-        checksum = checksum &+ (fractions[index] - fractions[index + 1]).denominator
+        checksum = checksum &+ Int(truncatingIfNeeded: (fractions[index] - fractions[index + 1]).denominator)
     }
     return checksum
 }
 
 @inline(never)
-func multiplicationScan(_ fractions: [Fraction], from start: Int) -> Int {
+func multiplicationScan<Integer>(_ fractions: [Rational<Integer>], from start: Int) -> Int {
     var checksum = 0
     for index in start ..< fractions.count - 1 {
-        checksum = checksum &+ (fractions[index] * fractions[index + 1]).denominator
+        checksum = checksum &+ Int(truncatingIfNeeded: (fractions[index] * fractions[index + 1]).denominator)
     }
     return checksum
 }
 
 /// The corpus has no zero numerators, so no division here throws.
 @inline(never)
-func divisionScan(_ fractions: [Fraction], from start: Int) -> Int {
+func divisionScan<Integer>(_ fractions: [Rational<Integer>], from start: Int) -> Int {
     var checksum = 0
     for index in start ..< fractions.count - 1 {
-        checksum = checksum &+ (try! fractions[index] / fractions[index + 1]).denominator
+        checksum = checksum &+ Int(truncatingIfNeeded: (try! fractions[index] / fractions[index + 1]).denominator)
     }
     return checksum
 }
@@ -328,4 +328,56 @@ measure("*", operations: count) { round in
 
 measure("/", operations: count) { round in
     blackHole(divisionScan(corpus, from: round))
+}
+
+// MARK: - Fraction128
+
+if #available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *) {
+    // The everyday values of `corpus`, held in 128 bits: what the wider type costs by itself.
+    let corpus128 = corpus.map(Fraction128.init)
+
+    // Fields of 60 to 62 bits, so every product runs to 120 bits or more: results a `Fraction`
+    // cannot hold, which is what a `Fraction128` is for. What using the width costs.
+    var wideGenerator = SplitMix64(seed: 0x5EED_1280_0000_0001)
+    let wideCorpus: [Fraction128] = (0 ..< count).map { _ in
+        let numerator = Int128(Int.random(in: (1 << 59) ... (1 << 62), using: &wideGenerator))
+        let denominator = Int128(Int.random(in: (1 << 59) ... (1 << 62), using: &wideGenerator))
+        return Fraction128(verifiedNumerator: Bool.random(using: &wideGenerator) ? -numerator : numerator,
+                           verifiedDenominator: denominator)
+    }
+
+    print("")
+    print("Fraction128")
+
+    measure("reduced().normalized()", operations: count) { round in
+        blackHole(reductionScan(corpus128, from: round))
+    }
+
+    measure("< (running minimum)", operations: count) { round in
+        blackHole(orderingScan(corpus128, from: round))
+    }
+
+    measure("hashValue", operations: count) { round in
+        blackHole(hashScan(corpus128, from: round))
+    }
+
+    measure("+", operations: count) { round in
+        blackHole(additionScan(corpus128, from: round))
+    }
+
+    measure("*", operations: count) { round in
+        blackHole(multiplicationScan(corpus128, from: round))
+    }
+
+    measure("/", operations: count) { round in
+        blackHole(divisionScan(corpus128, from: round))
+    }
+
+    measure("+ (60-bit fields)", operations: count) { round in
+        blackHole(additionScan(wideCorpus, from: round))
+    }
+
+    measure("* (60-bit fields)", operations: count) { round in
+        blackHole(multiplicationScan(wideCorpus, from: round))
+    }
 }
