@@ -108,4 +108,25 @@ class FractionCodableTests: XCTestCase {
         fraction = try JSONDecoder().decode(Fraction.self, from: data)
         XCTAssertEqual(fraction, 3)
     }
+
+    /// The fallback that decodes a plain number used to convert it with trapping arithmetic, so a
+    /// number too large for a Fraction, or NaN, crashed the decoding process instead of failing.
+    func testDecodingANumberThatDoesNotFitThrows() throws {
+        for payload in ["1e30", "-1e19"] {
+            XCTAssertThrowsError(try JSONDecoder().decode(Fraction.self, from: Data(payload.utf8)),
+                                 "\(payload) does not fit in a Fraction") { error in
+                guard case DecodingError.dataCorrupted = error else {
+                    return XCTFail("\(payload) should be reported as corrupted data, got \(error)")
+                }
+            }
+        }
+
+        // JSON has no NaN, but a property list can carry one.
+        let nan = try PropertyListEncoder().encode([Double.nan])
+        XCTAssertThrowsError(try PropertyListDecoder().decode([Fraction].self, from: nan), "NaN does not fit in a Fraction")
+
+        // A large number that does fit decodes; it used to trap as well.
+        let large = try JSONDecoder().decode(Fraction.self, from: Data("1e15".utf8))
+        XCTAssertEqual(large, Fraction(verifiedNumerator: 1_000_000_000_000_000), "1e15 should decode as 10^15/1")
+    }
 }

@@ -158,13 +158,13 @@ public struct Fraction: Codable, Sendable {
         } catch let error where !(error is FractionError)  {
             let container = try decoder.singleValueContainer()
             let value = try container.decode(Double.self)
-            let multiplier: Int = Int(value)
-            let operand = value - FloatLiteralType(multiplier)
-            let divisor = pow(10.0, Double(Self.defaultSignificantFloatingPointDigits))
-            let fractionInt = Int((operand * divisor).rounded())
-            numerator = fractionInt + (Int(divisor) * multiplier)
-            denominator = Int(divisor)
-            self.reduce()
+            // Decoded data comes from outside, so a value that does not fit is an error to report,
+            // not a reason to trap.
+            guard let fraction = Fraction(approximating: value, significantDigits: Self.defaultSignificantFloatingPointDigits) else {
+                throw DecodingError.dataCorruptedError(in: container, debugDescription: "\(value) does not fit in a Fraction")
+            }
+            numerator = fraction.numerator
+            denominator = fraction.denominator
         }
     }
 
@@ -211,12 +211,29 @@ public struct Fraction: Codable, Sendable {
         precondition(significantDigits >= 0, "significantDigits may not be negative, got \(significantDigits)")
         precondition(significantDigits <= maximum, "significantDigits may not exceed \(maximum), as 10 to the power of \(maximum + 1) overflows Int, got \(significantDigits)")
 
-        let multiplier: Int = Int(float)
-        let operand = float - FloatLiteralType(multiplier)
-        let divisor = pow(10.0, Double(significantDigits))
-        let fractionInt = Int((operand * divisor).rounded())
-        self.init(verifiedNumerator: fractionInt, verifiedDenominator: Int(divisor), wholes: multiplier)
-        reduce()
+        guard let fraction = Fraction(approximating: float, significantDigits: significantDigits) else {
+            preconditionFailure("\(float) does not fit in a Fraction")
+        }
+        self = fraction
+    }
+
+    /// `float` rounded to `significantDigits` fraction digits, in lowest terms; `nil` if that does
+    /// not fit, which includes NaN and the infinities.
+    ///
+    /// The whole part and the fraction digits are added as fractions, so only a result that does
+    /// not fit is refused. Folding the whole part into the numerator first, as `wholes · 10^n`,
+    /// overflowed for values as small as `1e15`.
+    init?(approximating float: Double, significantDigits: Int) {
+        guard let wholes = Int(exactly: float.rounded(.towardZero)) else { return nil }
+        let scale = pow(10.0, Double(significantDigits))
+        // The fractional part is below 1 in magnitude, so its digits never exceed 10^n.
+        let digits = Int(((float - Double(wholes)) * scale).rounded())
+
+        guard let result = Fraction.sum(Fraction(uncheckedNumerator: digits, denominator: Int(scale)),
+                                        Fraction(uncheckedNumerator: wholes, denominator: 1),
+                                        subtracting: false, reducing: true)
+        else { return nil }
+        self = result
     }
 
     /// Euclid's algorithm, over magnitudes.

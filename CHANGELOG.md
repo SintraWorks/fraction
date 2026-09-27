@@ -30,6 +30,11 @@ although the answer is `3/2^41`. Nothing that worked before returns anything dif
 - `init(float:significantDigits:)` accepted up to 18 digits everywhere, but where `Int` is 32 bits
   wide, as on arm64_32 watchOS, 10 to the power 10 already overflows it: 10 to 18 digits passed the
   check and then trapped. The bound now follows the width of `Int`.
+- `init(float:significantDigits:)`, and with it every float literal, folded the whole part into the
+  numerator as `wholes · 10^n` before reducing, which overflowed for values as small as `1e15`:
+  `let x: Fraction = 1e15` crashed. It now traps only on a value whose result does not fit.
+- Decoding a `Fraction` from a plain number too large for one, or from NaN, crashed the process
+  doing the decoding. It now throws `DecodingError.dataCorrupted`.
 
 ### Added
 
