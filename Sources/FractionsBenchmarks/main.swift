@@ -9,8 +9,10 @@
 //      swift run -c release FractionsBenchmarks
 //      swift run -c release -Xswiftc -cross-module-optimization FractionsBenchmarks
 //
-//  The second invocation is what `@inlinable` would buy a dependent, since SwiftPM does not
-//  enable cross-module optimization by default.
+//  The benchmark imports Fractions as a dependent does. SwiftPM does not enable cross-module
+//  optimization by default, so a dependent sees only what is `@inlinable`; the hot paths are,
+//  because `Rational` is generic, and generic code a caller cannot see runs unspecialized and many
+//  times slower. The second invocation shows what cross-module optimization adds on top.
 //
 //  - Important: This target must never gain a package dependency. The root manifest has an
 //    empty dependency graph, and anything added here would enter every dependent's

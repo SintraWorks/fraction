@@ -40,6 +40,19 @@ although the answer is `3/2^41`. Nothing that worked before returns anything dif
   large exponent. It now squares repeatedly, at most two multiplications per bit of the exponent,
   and accepts any exponent. Its results are unchanged, field for field.
 
+### Changed
+
+- `Fraction` is now a typealias for `Rational<Int>`, a fraction generic over the integer type of its
+  numerator and denominator. Code written against `Fraction` compiles unchanged. What can tell the
+  difference: `String(describing: Fraction.self)` reads `Rational<Int>`; `FractionError` is a
+  top-level type, still reachable as `Fraction.FractionError`; and
+  `defaultSignificantFloatingPointDigits` and `maximumSignificantFloatingPointDigits` are computed
+  rather than stored, as a generic type cannot store a static property.
+- The hot paths are `@inlinable`, so a dependent compiles them specialized for its own types.
+  Without that, generic code called from another module runs unspecialized, which in a prototype
+  made `reduce()` 16 times slower. In the benchmark every operation costs what it did, to within 3%,
+  and subtraction, multiplication, division and adding an integer are 6 to 9% faster.
+
 ### Added
 
 - `maximumSignificantFloatingPointDigits`, the upper bound of `significantDigits`: 18 where `Int` is
