@@ -697,23 +697,30 @@ extension Fraction {
 }
 
 public extension Fraction {
+    /// `self` raised to `exponent`, in lowest terms.
+    ///
+    /// Any exponent is accepted, `Int.min` included, and as with all arithmetic only a result
+    /// that does not fit traps. The work is repeated squaring, so it takes at most two
+    /// multiplications per bit of the exponent rather than one per unit of it.
+    ///
+    /// A negative exponent raises the reciprocal, which is spelled with the fields swapped, as
+    /// repeated division has always spelled it. Zero raised to any nonzero exponent, a negative
+    /// one included, is zero.
     func power(of exponent: Int) -> Fraction {
         if exponent == 0 { return .one }
         if numerator == 0 { return .zero }
         if exponent == 1 { return self }
-        
+
+        var base = exponent < 0 ? Fraction(uncheckedNumerator: denominator, denominator: numerator) : self
+        var remaining = exponent.magnitude
         var result = Fraction.one
-        
-        if exponent > 0 {
-            for _ in 0 ..< exponent {
-                result *= self
-            }
-        } else {
-            for _ in 0 ..< -exponent {
-                result = result.nonZeroDividing(by: self)
-            }
+        while true {
+            if remaining & 1 == 1 { result *= base }
+            remaining >>= 1
+            // Squaring only while a higher bit remains keeps every intermediate power below the
+            // result, so nothing traps that the result itself would not.
+            guard remaining != 0 else { return result }
+            base *= base
         }
-        
-        return result
     }
 }

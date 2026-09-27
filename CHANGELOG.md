@@ -35,6 +35,10 @@ although the answer is `3/2^41`. Nothing that worked before returns anything dif
   `let x: Fraction = 1e15` crashed. It now traps only on a value whose result does not fit.
 - Decoding a `Fraction` from a plain number too large for one, or from NaN, crashed the process
   doing the decoding. It now throws `DecodingError.dataCorrupted`.
+- `power(of:)` trapped on an exponent of `Int.min`, which it negated, and multiplied once per unit
+  of the exponent, so even a base of magnitude one, every power of which fits, could not take a
+  large exponent. It now squares repeatedly, at most two multiplications per bit of the exponent,
+  and accepts any exponent. Its results are unchanged, field for field.
 
 ### Added
 
