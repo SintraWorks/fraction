@@ -62,7 +62,10 @@ import math_h
         let fractionalFraction: Fraction = 3.9
         let fractionalFraction2 = try? fractionalFraction / 3.3
 
-    - Warning: Fraction will trap if any operation results in an overflow or underflow.
+    - Warning: Arithmetic traps when its result does not fit: when the result's numerator or
+      denominator falls outside `Int.min + 1 ... Int.max`. The result is in lowest terms unless you
+      pass `reducing: false`, in which case it is the unreduced result that has to fit. An
+      intermediate value too large for `Int` never causes a trap; it is carried exactly instead.
  */
 public struct Fraction: Codable, Sendable {
     /// The number of fraction digits considered when creating a fraction from a floating point
@@ -282,18 +285,10 @@ public struct Fraction: Codable, Sendable {
     ///   - other: The Fraction to add.
     ///   - reducing: A flag indicating whether to reduce the result of the addition to its GCD. Defaults to `true`.
     public mutating func add(_ other: Fraction, reducing: Bool = true) {
-        self.normalize()
-        let normalizedOther = other.normalized()
-
-        if denominator == normalizedOther.denominator {
-            numerator += normalizedOther.numerator
-        } else {
-            numerator = numerator * normalizedOther.denominator + normalizedOther.numerator * denominator
-            denominator = denominator * normalizedOther.denominator
+        guard let sum = Fraction.sum(normalized(), other.normalized(), subtracting: false, reducing: reducing) else {
+            Fraction.trapOverflow(of: "\(self) + \(other)", reducing: reducing)
         }
-        if reducing {
-            self.reduce()
-        }
+        self = sum
     }
 
     /// Add an integer to self.
@@ -301,13 +296,11 @@ public struct Fraction: Codable, Sendable {
     ///   - integer: The integer to add.
     ///   - reducing: A flag indicating whether to reduce the result of the addition to its GCD. Defaults to `true`.
     public mutating func add(_ integer: Int, reducing: Bool = true) {
-        self.normalize()
-
-        numerator += integer * denominator
-
-        if reducing {
-            self.reduce()
+        let addend = Fraction(uncheckedNumerator: integer, denominator: 1)
+        guard let sum = Fraction.sum(normalized(), addend, subtracting: false, reducing: reducing) else {
+            Fraction.trapOverflow(of: "\(self) + \(integer)", reducing: reducing)
         }
+        self = sum
     }
 
     /// Add another Fraction to a copy of `self` and return the result.
@@ -335,16 +328,10 @@ public struct Fraction: Codable, Sendable {
     ///   - other: The Fraction to subtract.
     ///   - reducing: A flag indicating whether to reduce the result of the subtraction to its GCD. Defaults to `true`.
     public mutating func subtract(_ other: Fraction, reducing: Bool = true) {
-        if denominator == other.denominator {
-            numerator -= other.numerator
-        } else {
-            numerator = numerator * other.denominator - other.numerator * denominator
-            denominator = denominator * other.denominator
+        guard let difference = Fraction.sum(self, other, subtracting: true, reducing: reducing) else {
+            Fraction.trapOverflow(of: "\(self) - \(other)", reducing: reducing)
         }
-
-        if reducing {
-            self.reduce()
-        }
+        self = difference
     }
 
     /// Subtract an integer from self.
@@ -352,11 +339,11 @@ public struct Fraction: Codable, Sendable {
     ///   - integer: The integer to subtract.
     ///   - reducing: A flag indicating whether to reduce the result of the subtraction to its GCD. Defaults to `true`.
     public mutating func subtract(_ integer: Int, reducing: Bool = true) {
-            numerator -= integer * denominator
-
-        if reducing {
-            self.reduce()
+        let subtrahend = Fraction(uncheckedNumerator: integer, denominator: 1)
+        guard let difference = Fraction.sum(self, subtrahend, subtracting: true, reducing: reducing) else {
+            Fraction.trapOverflow(of: "\(self) - \(integer)", reducing: reducing)
         }
+        self = difference
     }
 
     /// Subtract another Fraction from a copy of `self` and return the result.
@@ -384,11 +371,10 @@ public struct Fraction: Codable, Sendable {
     ///   - other: The Fraction to multiply by.
     ///   - reducing: A flag indicating whether to reduce the result of the multiplication to its GCD. Defaults to `true`.
     public mutating func multiply(by other: Fraction, reducing: Bool = true) {
-        numerator = numerator * other.numerator
-        denominator = denominator * other.denominator
-        if reducing {
-            self.reduce()
+        guard let product = Fraction.product(self, other, reducing: reducing) else {
+            Fraction.trapOverflow(of: "\(self) * \(other)", reducing: reducing)
         }
+        self = product
     }
 
     /// Multiply self by an integer.
@@ -396,10 +382,11 @@ public struct Fraction: Codable, Sendable {
     ///   - integer: The integer to multiply by.
     ///   - reducing: A flag indicating whether to reduce the result of the multiplication to its GCD. Defaults to `true`.
     public mutating func multiply(by integer: Int, reducing: Bool = true) {
-        numerator = numerator * integer
-        if reducing {
-            self.reduce()
+        let multiplier = Fraction(uncheckedNumerator: integer, denominator: 1)
+        guard let product = Fraction.product(self, multiplier, reducing: reducing) else {
+            Fraction.trapOverflow(of: "\(self) * \(integer)", reducing: reducing)
         }
+        self = product
     }
 
     /// Multiply a copy of `self` by another Fraction and return the result.
@@ -429,11 +416,7 @@ public struct Fraction: Codable, Sendable {
     public mutating func divide(by other: Fraction, reducing: Bool = true) throws {
         guard other.numerator != 0 else { throw FractionError.illegalDivision }
 
-        numerator = numerator * other.denominator
-        denominator = denominator * other.numerator
-        if reducing {
-            self.reduce()
-        }
+        nonZeroDivide(by: other, reducing: reducing)
     }
 
     /// Divide self by an integer.
@@ -443,12 +426,7 @@ public struct Fraction: Codable, Sendable {
     public mutating func divide(by integer: Int, reducing: Bool = true) throws {
         guard integer != 0 else { throw FractionError.illegalDivision }
 
-        let other = Fraction(numerator: integer, denominator: 1)!
-        numerator = numerator * other.denominator
-        denominator = denominator * other.numerator
-        if reducing {
-            self.reduce()
-        }
+        nonZeroDivide(by: integer, reducing: reducing)
     }
     
     /// Divide self by another Fraction. Caller is taking responsibility to not divide by zero.
@@ -456,11 +434,13 @@ public struct Fraction: Codable, Sendable {
     ///   - other: The Fraction to divide by.
     ///   - reducing: A flag indicating whether to reduce the result of the division to its GCD. Defaults to `true`.
     public mutating func nonZeroDivide(by other: Fraction, reducing: Bool = true) {
-        numerator = numerator * other.denominator
-        denominator = denominator * other.numerator
-        if reducing {
-            self.reduce()
+        // Dividing is multiplying by the divisor with its fields swapped, which spells the result
+        // `(a·d)/(b·c)`, as it always has been.
+        let reciprocal = Fraction(uncheckedNumerator: other.denominator, denominator: other.numerator)
+        guard let quotient = Fraction.product(self, reciprocal, reducing: reducing) else {
+            Fraction.trapOverflow(of: "\(self) / \(other)", reducing: reducing)
         }
+        self = quotient
     }
 
     /// Divide self by an integer. Caller is taking responsibility to not divide by zero.
@@ -468,8 +448,11 @@ public struct Fraction: Codable, Sendable {
     ///   - integer: The integer to divide by.
     ///   - reducing: A flag indicating whether to reduce the result of the division to its GCD. Defaults to `true`.
     public mutating func nonZeroDivide(by integer: Int, reducing: Bool = true) {
-        let other = Fraction(numerator: integer, denominator: 1)!
-        return nonZeroDivide(by: other)
+        let reciprocal = Fraction(uncheckedNumerator: 1, denominator: integer)
+        guard let quotient = Fraction.product(self, reciprocal, reducing: reducing) else {
+            Fraction.trapOverflow(of: "\(self) / \(integer)", reducing: reducing)
+        }
+        self = quotient
     }
 
     /// Divide a copy of `self` by another Fraction and return the result.
@@ -509,8 +492,9 @@ public struct Fraction: Codable, Sendable {
     ///   - integer: The integer to divide by.
     ///   - reducing: A flag indicating whether to reduce the result of the division to its GCD. Defaults to `true`.
     public func nonZeroDividing(by integer: Int, reducing: Bool = true) -> Fraction {
-        let other = Fraction(numerator: integer, denominator: 1)!
-        return nonZeroDividing(by: other, reducing: reducing)
+        var copy = self
+        copy.nonZeroDivide(by: integer, reducing: reducing)
+        return copy
     }
 
     /// Flip `nominator` and `denominator` to their positive counterpart if negative.
@@ -555,7 +539,9 @@ extension Fraction {
     }
 
     public static func - (lhs: Int, rhs: Fraction) -> Fraction {
-        Fraction(numerator: lhs, denominator: 1)!.subtracting(rhs)
+        // Any Int is a valid operand here, `Int.min` included, which the failable initializer
+        // would reject.
+        Fraction(uncheckedNumerator: lhs, denominator: 1).subtracting(rhs)
     }
 
     public static func - (lhs: Fraction, rhs: Int) -> Fraction {
@@ -587,7 +573,8 @@ extension Fraction {
     }
 
     public static func / (lhs: Int, rhs: Fraction) throws -> Fraction {
-        try Fraction(numerator: lhs, denominator: 1)!.dividing(by: rhs)
+        // As for `-`: `Int.min` is a valid operand, which the failable initializer would reject.
+        try Fraction(uncheckedNumerator: lhs, denominator: 1).dividing(by: rhs)
     }
 
     public static func / (lhs: Fraction, rhs: Int) throws -> Fraction {

@@ -126,6 +126,16 @@ let equalCorpus: [Fraction] = corpus.map { fraction in
                     verifiedDenominator: fraction.denominator * scale)
 }
 
+/// Fractions whose sums all take the exact path: power-of-two denominators of 2^32 and up, so
+/// the fast path's product of two of them overflows, while every sum fits once reduced. Odd
+/// numerators keep each fraction in lowest terms.
+let exactPathCorpus: [Fraction] = (0 ..< count).map { _ in
+    let numerator = Int.random(in: 1 ... 4096, using: &generator) | 1
+    let exponent = Int.random(in: 32 ... 62, using: &generator)
+    return Fraction(verifiedNumerator: Bool.random(using: &generator) ? -numerator : numerator,
+                    verifiedDenominator: 1 << exponent)
+}
+
 // MARK: - Scans
 //
 // Each scan is `@inline(never)` and takes the round number as its starting index. Without that,
@@ -180,6 +190,56 @@ func controlHashScan(_ pairs: [IntPair], from start: Int) -> Int {
     var checksum = 0
     for index in start ..< pairs.count {
         checksum = checksum &+ pairs[index].hashValue
+    }
+    return checksum
+}
+
+// The arithmetic scans combine each element with its successor. Every operand is in the low
+// thousands, so no product comes near overflowing: these measure the path arithmetic takes in
+// ordinary use, reduction included.
+
+@inline(never)
+func additionScan(_ fractions: [Fraction], from start: Int) -> Int {
+    var checksum = 0
+    for index in start ..< fractions.count - 1 {
+        checksum = checksum &+ (fractions[index] + fractions[index + 1]).denominator
+    }
+    return checksum
+}
+
+@inline(never)
+func integerAdditionScan(_ fractions: [Fraction], from start: Int) -> Int {
+    var checksum = 0
+    for index in start ..< fractions.count - 1 {
+        checksum = checksum &+ (fractions[index] + fractions[index + 1].numerator).denominator
+    }
+    return checksum
+}
+
+@inline(never)
+func subtractionScan(_ fractions: [Fraction], from start: Int) -> Int {
+    var checksum = 0
+    for index in start ..< fractions.count - 1 {
+        checksum = checksum &+ (fractions[index] - fractions[index + 1]).denominator
+    }
+    return checksum
+}
+
+@inline(never)
+func multiplicationScan(_ fractions: [Fraction], from start: Int) -> Int {
+    var checksum = 0
+    for index in start ..< fractions.count - 1 {
+        checksum = checksum &+ (fractions[index] * fractions[index + 1]).denominator
+    }
+    return checksum
+}
+
+/// The corpus has no zero numerators, so no division here throws.
+@inline(never)
+func divisionScan(_ fractions: [Fraction], from start: Int) -> Int {
+    var checksum = 0
+    for index in start ..< fractions.count - 1 {
+        checksum = checksum &+ (try! fractions[index] / fractions[index + 1]).denominator
     }
     return checksum
 }
@@ -242,4 +302,28 @@ measure("hashValue", operations: count) { round in
 
 measure("hashValue (control)", operations: count) { round in
     blackHole(controlHashScan(controlCorpus, from: round))
+}
+
+measure("+", operations: count) { round in
+    blackHole(additionScan(corpus, from: round))
+}
+
+measure("+ (exact path)", operations: count) { round in
+    blackHole(additionScan(exactPathCorpus, from: round))
+}
+
+measure("+ Int", operations: count) { round in
+    blackHole(integerAdditionScan(corpus, from: round))
+}
+
+measure("-", operations: count) { round in
+    blackHole(subtractionScan(corpus, from: round))
+}
+
+measure("*", operations: count) { round in
+    blackHole(multiplicationScan(corpus, from: round))
+}
+
+measure("/", operations: count) { round in
+    blackHole(divisionScan(corpus, from: round))
 }

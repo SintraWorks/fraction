@@ -23,7 +23,7 @@ By default arithmetic operations will reduce the result to its **Greatest Common
 
         f1.add(f2, reducing: false)
 
-Arithmetic on a Fraction will trap if an operation results in an overflow or underflow. Comparing and hashing fractions never trap: they carry their products at full width.
+Arithmetic on a Fraction traps only when its result does not fit: when the result's numerator or denominator falls outside `Int.min + 1 ... Int.max`. Results are in lowest terms unless you pass `reducing: false`, and then it is the unreduced result that has to fit. Intermediate values never cause a trap: `1/2^40 + 1/2^41` is `3/2^41`, although the product of the two denominators is far beyond `Int`. Comparing and hashing fractions never trap either: they carry their products at full width.
 
 Release-by-release changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
