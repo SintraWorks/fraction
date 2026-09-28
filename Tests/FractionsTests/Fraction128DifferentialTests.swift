@@ -278,6 +278,11 @@ class Fraction128DifferentialTests: XCTestCase {
                                  api: { $0.adding($1.numerator, reducing: $2) },
                                  core: { Fraction128.sum($0.normalized(), $1, subtracting: false, reducing: $2) }),
                     on: corpus.integers)
+        tally.check(Operation128(name: "integer + fraction", spelled: { Spelled.sum($1, $0) },
+                                 api: { a, b, _ in a.numerator + b },
+                                 core: { Fraction128.sum($1.normalized(), $0, subtracting: false, reducing: $2) },
+                                 alwaysReduces: true),
+                    on: corpus.integersFirst)
         assertAgrees(tally, seed: seed)
     }
 
@@ -291,6 +296,10 @@ class Fraction128DifferentialTests: XCTestCase {
                                  api: { $0.subtracting($1, reducing: $2) },
                                  core: { Fraction128.sum($0, $1, subtracting: true, reducing: $2) }),
                     on: corpus.fractions)
+        tally.check(Operation128(name: "subtract(integer)", spelled: Spelled.difference,
+                                 api: { $0.subtracting($1.numerator, reducing: $2) },
+                                 core: { Fraction128.sum($0, $1, subtracting: true, reducing: $2) }),
+                    on: corpus.integers)
         tally.check(Operation128(name: "integer - fraction", spelled: Spelled.difference,
                                  api: { a, b, _ in a.numerator - b },
                                  core: { Fraction128.sum($0, $1, subtracting: true, reducing: $2) },
@@ -313,6 +322,11 @@ class Fraction128DifferentialTests: XCTestCase {
                                  api: { $0.multiplying(by: $1.numerator, reducing: $2) },
                                  core: { Fraction128.product($0, $1, reducing: $2) }),
                     on: corpus.integers)
+        tally.check(Operation128(name: "integer * fraction", spelled: { Spelled.product($1, $0) },
+                                 api: { a, b, _ in a.numerator * b },
+                                 core: { Fraction128.product($1, $0, reducing: $2) },
+                                 alwaysReduces: true),
+                    on: corpus.integersFirst)
         assertAgrees(tally, seed: seed)
     }
 
@@ -329,10 +343,23 @@ class Fraction128DifferentialTests: XCTestCase {
                                  api: { try! $0.dividing(by: $1, reducing: $2) },
                                  core: { Fraction128.product($0, reciprocal($1), reducing: $2) }),
                     on: corpus.fractions.filter { $0.1.numerator != 0 })
+        tally.check(Operation128(name: "nonZeroDivide", spelled: Spelled.quotient,
+                                 api: { $0.nonZeroDividing(by: $1, reducing: $2) },
+                                 core: { Fraction128.product($0, reciprocal($1), reducing: $2) }),
+                    on: corpus.fractions.filter { $0.1.numerator != 0 })
         tally.check(Operation128(name: "divide(integer)", spelled: Spelled.quotient,
                                  api: { try! $0.dividing(by: $1.numerator, reducing: $2) },
                                  core: { Fraction128.product($0, reciprocal($1), reducing: $2) }),
                     on: corpus.integers.filter { $0.1.numerator != 0 })
+        tally.check(Operation128(name: "nonZeroDivide(integer)", spelled: Spelled.quotient,
+                                 api: { $0.nonZeroDividing(by: $1.numerator, reducing: $2) },
+                                 core: { Fraction128.product($0, reciprocal($1), reducing: $2) }),
+                    on: corpus.integers.filter { $0.1.numerator != 0 })
+        tally.check(Operation128(name: "integer / fraction", spelled: Spelled.quotient,
+                                 api: { a, b, _ in try! a.numerator / b },
+                                 core: { Fraction128.product($0, reciprocal($1), reducing: $2) },
+                                 alwaysReduces: true),
+                    on: corpus.integersFirst.filter { $0.1.numerator != 0 })
         assertAgrees(tally, seed: seed)
     }
 }

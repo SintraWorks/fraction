@@ -44,7 +44,7 @@ Convert between the two with `init(_:)`, which traps if the value does not fit, 
 
 Encoded, a `Fraction128` writes each field as a number when it fits in 64 bits, exactly as a `Fraction` does, and as a decimal string when it does not. So either type decodes the other's data wherever the values fit, and both JSON and property lists can carry any `Fraction128`; `PropertyListEncoder` cannot encode an `Int128` itself.
 
-A `Fraction128` holding everyday values costs 1.2 to 1.4 times what a `Fraction` does, and comparing costs twice as much. Arithmetic whose results reach well past 64 bits costs more, about six times as much as everyday arithmetic on a `Fraction` in the package's benchmark, as 128-bit division runs in software.
+A `Fraction128` holding everyday values costs 1.2 to 1.4 times what a `Fraction` does, and comparing costs twice as much. Arithmetic whose results reach well past 64 bits costs more, six to seven times as much as everyday arithmetic on a `Fraction` in the package's benchmark, as 128-bit division runs in software.
 
 ## Using **Fractions** in your project
 

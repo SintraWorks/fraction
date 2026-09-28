@@ -113,6 +113,35 @@ class Fraction128Tests: XCTestCase {
         assertFields(base.power(of: -80), 1 << 80, threeToTheEightieth, "(3/2)^-80 should be 2^80/3^80")
     }
 
+    /// An integer literal is neither an `Int128` nor a `Fraction128` by default, so each named
+    /// operation's two overloads used to tie on one, and none of these compiled.
+    func testNamedOperationsTakeIntegerLiterals() throws {
+        guard #available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *) else { throw XCTSkip(Self.needsInt128) }
+
+        let half = Fraction128(verifiedNumerator: 1, verifiedDenominator: 2)
+        assertFields(half.adding(1), 3, 2, "1/2 + 1 should be 3/2")
+        assertFields(half.subtracting(1), -1, 2, "1/2 - 1 should be -1/2")
+        assertFields(half.multiplying(by: 3), 3, 2, "1/2 * 3 should be 3/2")
+        assertFields(try half.dividing(by: 2), 1, 4, "1/2 / 2 should be 1/4")
+        assertFields(half.nonZeroDividing(by: 2), 1, 4, "1/2 / 2 should be 1/4")
+
+        var sum = half
+        sum.add(1)
+        assertFields(sum, 3, 2, "1/2 + 1 should be 3/2")
+        var difference = half
+        difference.subtract(1, reducing: false)
+        assertFields(difference, -1, 2, "1/2 - 1 without reducing should be -1/2")
+        var product = half
+        product.multiply(by: 3)
+        assertFields(product, 3, 2, "1/2 * 3 should be 3/2")
+        var quotient = half
+        try quotient.divide(by: 2)
+        assertFields(quotient, 1, 4, "1/2 / 2 should be 1/4")
+        var nonZeroQuotient = half
+        nonZeroQuotient.nonZeroDivide(by: 2)
+        assertFields(nonZeroQuotient, 1, 4, "1/2 / 2 should be 1/4")
+    }
+
     func testFloatConversionBeyond64Bits() throws {
         guard #available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *) else { throw XCTSkip(Self.needsInt128) }
 
@@ -121,6 +150,53 @@ class Fraction128Tests: XCTestCase {
         assertFields(Fraction128(float: 0.5, significantDigits: 38), 1, 2, "0.5 at 38 digits should still be 1/2")
         assertFields(Fraction128(float: -2.25, significantDigits: 30), -9, 4, "-2.25 at 30 digits should still be -9/4")
         XCTAssertNil(Fraction128(approximating: 1e39, significantDigits: 4), "1e39 does not fit in a Fraction128")
+    }
+
+    /// Digits past the 22nd used to be zeros whatever the value, so a small value lost its
+    /// significant digits there, or vanished altogether.
+    func testSmallFloatsKeepTheirDigitsPastTheTwentySecond() throws {
+        guard #available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *) else { throw XCTSkip(Self.needsInt128) }
+
+        assertFields(Fraction128(float: 5e-25, significantDigits: 31), 1, 2_000_000_000_000_000_000_000_000,
+                     "5e-25 at 31 digits should be 1/(2·10^24), not 0")
+        assertFields(Fraction128(float: -1.2345e-20, significantDigits: 30), -2469, 200_000_000_000_000_000_000_000,
+                     "-1.2345e-20 at 30 digits should be -12345/10^24, not -123/10^22")
+        // A value whose digits end within the first 22 is unaffected.
+        assertFields(Fraction128(float: 0.1, significantDigits: 38), 1, 10, "0.1 at 38 digits should still be 1/10")
+    }
+
+    /// Every conversion, at every precision, lies within half a unit of its last digit of the
+    /// value converted, give or take the precision of the `Double` itself.
+    func testFloatConversionIsAccurateAtEveryPrecision() throws {
+        guard #available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *) else { throw XCTSkip(Self.needsInt128) }
+
+        let seed: UInt64 = 0x5EED_0000_0000_0040
+        var generator = SplitMix64(seed: seed)
+        var mismatches = 0
+        var firstMismatch: String?
+
+        for _ in 0 ..< 20_000 {
+            let magnitude = pow(10.0, Double.random(in: -36 ... 38, using: &generator))
+            let value = Double.random(in: -magnitude ... magnitude, using: &generator)
+            let digits = Int.random(in: 0 ... Fraction128.maximumSignificantFloatingPointDigits, using: &generator)
+
+            // `init(float:)` would trap on a refusal, and take the test run down with it.
+            let converted = Fraction128(approximating: value, significantDigits: digits)
+            // Half a unit of the last digit, plus a few units of the Double's last place, for the
+            // scaling here and for `doubleValue`.
+            let tolerance = 0.5 * pow(10.0, -Double(digits)) + abs(value) * 1e-15
+            if converted.map({ abs($0.doubleValue - value) > tolerance }) ?? true {
+                mismatches += 1
+                if firstMismatch == nil {
+                    firstMismatch = "\(value) at \(digits) digits became \(converted.map { "\($0)" } ?? "nil")"
+                }
+            }
+        }
+
+        XCTAssertEqual(mismatches, 0, """
+            \(mismatches) of 20000 conversions strayed from their value (seed \(seed)). \
+            First: \(firstMismatch ?? "none")
+            """)
     }
 
     // MARK: Conversions
@@ -176,7 +252,11 @@ class Fraction128Tests: XCTestCase {
         XCTAssertThrowsError(try JSONDecoder().decode(Fraction.self, from: Data(json.utf8)),
                              "A Fraction cannot hold these fields, and should say so rather than trap")
         XCTAssertThrowsError(try JSONDecoder().decode(Fraction128.self, from: Data(#"{"numerator":"one","denominator":"2"}"#.utf8)),
-                             "A string that is not an integer should be reported")
+                             "A string that is not an integer should be reported") { error in
+            guard case DecodingError.dataCorrupted = error else {
+                return XCTFail("A string that is not an integer should be reported as corrupted data, got \(error)")
+            }
+        }
     }
 
     /// `PropertyListEncoder` cannot encode an `Int128` itself, which is what the string form is for.

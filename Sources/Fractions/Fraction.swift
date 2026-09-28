@@ -23,8 +23,6 @@
 //  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 //  THE SOFTWARE.
 
-import math_h
-
 /// A fraction whose numerator and denominator are `Int`s: the type most code uses.
 ///
 /// Everything a fraction can do is documented on ``Rational``, which this is a specialization of.
@@ -48,9 +46,14 @@ public typealias Fraction128 = Rational<Int128>
 
 /// The errors a fraction's throwing initializers and operations raise, whatever its integer type.
 public enum FractionError: Error {
+    /// Decoding found a numerator of `Integer.min`, which no fraction may hold.
     case illegalNumerator
+    /// Decoding found a denominator of 0, or of `Integer.min`, which no fraction may hold.
     case illegalDenominator
+    /// A throwing division was asked to divide by zero.
     case illegalDivision
+    /// Never thrown: no release has raised it, and decoding reports malformed data as a
+    /// `DecodingError`. It remains so that code naming it still compiles.
     case decodingError
 }
 
@@ -101,13 +104,20 @@ public enum FractionError: Error {
  */
 public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: Sendable {
     /// The number of fraction digits considered when creating a fraction from a floating point
-    /// value, unless a call supplies its own.
+    /// value, unless a call supplies its own: 4, or where `Integer` cannot hold 10^4, as an `Int8`
+    /// cannot, `maximumSignificantFloatingPointDigits`.
     ///
     /// Pass `significantDigits` to `init(float:significantDigits:)` to convert at a different
     /// precision. That is a per-call choice rather than a process-wide setting, so it is safe to
     /// use from any concurrency domain and cannot change the meaning of a conversion elsewhere.
     @inlinable
-    public static var defaultSignificantFloatingPointDigits: Int { 4 }
+    public static var defaultSignificantFloatingPointDigits: Int {
+        // 10^4 lies between 2^13 and 2^14, so a signed type of 15 bits or more holds it. The width
+        // is a constant, so this folds away, and with it the loops a computed precision would
+        // leave in every conversion: comparing against `maximumSignificantFloatingPointDigits`
+        // instead cost a `Fraction`'s float conversion 4%.
+        Integer.bitWidth >= 15 ? 4 : maximumSignificantFloatingPointDigits
+    }
 
     /// The most fraction digits `init(float:significantDigits:)` can preserve: for a `Fraction`,
     /// 18 where `Int` is 64 bits wide, and 9 where it is 32, as on arm64_32 watchOS.
@@ -217,6 +227,11 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// `significantDigits` decimal places; anything longer is rounded. `0.5` converts to `1/2`,
     /// while at the default precision `0.123456789` converts to `247/2000`.
     ///
+    /// A `Double` carries only 15 to 17 significant digits, and digits asked for beyond those come
+    /// from its binary rounding rather than from the decimal it was written as. So at 38 digits a
+    /// ``Fraction128`` converts `0.1` to `1/10`, but `0.123456789` to a fraction a few parts in
+    /// 10^17 away from `123456789/10^9`.
+    ///
     /// - Note: The upper bound is the exponent of the largest power of ten that fits in `Integer`;
     ///   a higher value would overflow while computing the denominator.
     @inlinable
@@ -242,20 +257,38 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
         guard let scale = Rational.powerOfTen(significantDigits),
               let wholes = Integer(exactly: float.rounded(.towardZero))
         else { return nil }
-        // 10^22 is the largest power of ten a Double holds exactly, and already past the 17 or so
-        // digits a Double carries at all. So scale by at most that in floating point, where an
-        // inexact scale would turn even 0.5 into something not quite 1/2, and multiply any further
-        // digits in as zeros. Only an `Integer` wider than 64 bits allows more than 22 digits.
-        let exactDigits = Swift.min(significantDigits, 22)
-        // The fractional part is below 1 in magnitude, so its digits never exceed 10^n.
-        let digits = Integer(((float - Double(wholes)) * pow(10.0, Double(exactDigits))).rounded())
-            * Rational.powerOfTen(significantDigits - exactDigits)!
+        let digits = Rational.fractionDigits(of: float - Double(wholes), count: significantDigits)
 
         guard let result = Rational.sum(Rational(uncheckedNumerator: digits, denominator: scale),
                                         Rational(uncheckedNumerator: wholes, denominator: 1),
                                         subtracting: false, reducing: true)
         else { return nil }
         self = result
+    }
+
+    /// The first `count` decimal digits of `fraction`, a value below 1 in magnitude, as an integer
+    /// rounded at the last of them: `0.375` to 2 digits is `38`. 10 to the power `count` must fit
+    /// in `Integer`, and the result is at most that.
+    ///
+    /// 10^22 is the largest power of ten a `Double` holds exactly, so the scaling in floating point
+    /// stops there: an inexact scale would turn even 0.5 into something not quite 1/2. Any further
+    /// digits come from what the scaled value holds below its units. For all but a tiny fraction,
+    /// the scaled value is a whole number, and they are zeros: the `Double` has no more to give.
+    /// For a tiny one, they are the rest of its significant digits, without which `5e-25` at 31
+    /// digits came out as 0. Only an `Integer` wider than 64 bits allows more than 22 digits.
+    @inlinable
+    static func fractionDigits(of fraction: Double, count: Int) -> Integer {
+        let exactCount = Swift.min(count, 22)
+        // The power of ten converts from `Integer` exactly, which leaves no need for `pow`, nor
+        // for `math_h`, a module Linux does not have.
+        let scaled = fraction * Double(powerOfTen(exactCount)!)
+        guard count > exactCount else { return Integer(scaled.rounded()) }
+
+        let remainingCount = count - exactCount
+        let whole = scaled.rounded(.towardZero)
+        let rest = ((scaled - whole) * Double(powerOfTen(remainingCount)!)).rounded()
+        // `whole` is below 10^22 and `rest` at most 10^remainingCount, so neither step overflows.
+        return Integer(whole) * powerOfTen(remainingCount)! + Integer(rest)
     }
 
     /// 10 to the power `exponent`, or `nil` if that is negative or overflows `Integer`.
@@ -406,11 +439,16 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
         Float(doubleValue)
     }
 
+    // Each operation taking a fraction is disfavored against its twin taking an integer, so that an
+    // integer literal picks the integer one. For a `Fraction` it would win anyway, as `Int` is a
+    // literal's default type, but for a `Fraction128` neither twin's type is, and without this
+    // `x.adding(1)` would not compile.
+
     /// Add another fraction to self.
     /// - Parameters:
     ///   - other: The fraction to add.
     ///   - reducing: A flag indicating whether to reduce the result of the addition to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public mutating func add(_ other: Rational, reducing: Bool = true) {
         guard let sum = Rational.sum(normalized(), other.normalized(), subtracting: false, reducing: reducing) else {
             Rational.trapOverflow(of: "\(self) + \(other)", reducing: reducing)
@@ -435,7 +473,7 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// - Parameters:
     ///   - other: The fraction to add.
     ///   - reducing: A flag indicating whether to reduce the result of the addition to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public func adding(_ other: Rational, reducing: Bool = true) -> Rational {
         var copy = self
         copy.add(other, reducing: reducing)
@@ -457,7 +495,7 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// - Parameters:
     ///   - other: The fraction to subtract.
     ///   - reducing: A flag indicating whether to reduce the result of the subtraction to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public mutating func subtract(_ other: Rational, reducing: Bool = true) {
         guard let difference = Rational.sum(self, other, subtracting: true, reducing: reducing) else {
             Rational.trapOverflow(of: "\(self) - \(other)", reducing: reducing)
@@ -482,7 +520,7 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// - Parameters:
     ///   - other: The fraction to subtract.
     ///   - reducing: A flag indicating whether to reduce the result of the subtraction to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public func subtracting(_ other: Rational, reducing: Bool = true) -> Rational {
         var copy = self
         copy.subtract(other, reducing: reducing)
@@ -504,7 +542,7 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// - Parameters:
     ///   - other: The fraction to multiply by.
     ///   - reducing: A flag indicating whether to reduce the result of the multiplication to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public mutating func multiply(by other: Rational, reducing: Bool = true) {
         guard let product = Rational.product(self, other, reducing: reducing) else {
             Rational.trapOverflow(of: "\(self) * \(other)", reducing: reducing)
@@ -529,7 +567,7 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// - Parameters:
     ///   - other: The fraction to multiply by.
     ///   - reducing: A flag indicating whether to reduce the result of the multiplication to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public func multiplying(by other: Rational, reducing: Bool = true) -> Rational {
         var copy = self
         copy.multiply(by: other, reducing:  reducing)
@@ -551,7 +589,7 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// - Parameters:
     ///   - other: The fraction to divide by.
     ///   - reducing: A flag indicating whether to reduce the result of the division to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public mutating func divide(by other: Rational, reducing: Bool = true) throws {
         guard other.numerator != 0 else { throw FractionError.illegalDivision }
 
@@ -573,7 +611,7 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// - Parameters:
     ///   - other: The fraction to divide by.
     ///   - reducing: A flag indicating whether to reduce the result of the division to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public mutating func nonZeroDivide(by other: Rational, reducing: Bool = true) {
         // Dividing is multiplying by the divisor with its fields swapped, which spells the result
         // `(a·d)/(b·c)`, as it always has been.
@@ -601,7 +639,7 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// - Parameters:
     ///   - other: The fraction to divide by.
     ///   - reducing: A flag indicating whether to reduce the result of the division to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public func dividing(by other: Rational, reducing: Bool = true) throws -> Rational {
         var copy = self
         try copy.divide(by: other, reducing: reducing)
@@ -625,7 +663,7 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// - Parameters:
     ///   - other: The fraction to divide by.
     ///   - reducing: A flag indicating whether to reduce the result of the division to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public func nonZeroDividing(by other: Rational, reducing: Bool = true) -> Rational {
         var copy = self
         copy.nonZeroDivide(by: other, reducing: reducing)
@@ -815,24 +853,43 @@ extension Rational: ExpressibleByFloatLiteral {
 }
 
 extension Rational: Codable where Integer: Codable {
+    /// Decodes the fields as `encode(to:)` writes them, or a plain number, which converts as
+    /// `init(float:significantDigits:)` converts it at the default precision.
+    ///
+    /// A field that is missing or malformed throws the `DecodingError` decoding it raised, and a
+    /// numerator of `Integer.min`, or a denominator of 0 or `Integer.min`, throws a
+    /// `FractionError`. A plain number that does not fit throws `DecodingError.dataCorrupted`.
     public init(from decoder: Decoder) throws {
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else {
+            self = try Rational.decodePlainNumber(from: decoder)
+            return
+        }
         do {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
             numerator = try Rational.decodeField(.numerator, from: container)
             denominator = try Rational.decodeField(.denominator, from: container)
-            if numerator == Integer.min { throw FractionError.illegalNumerator }
-            if denominator == 0 || denominator == Integer.min { throw FractionError.illegalDenominator }
-        } catch let error where !(error is FractionError)  {
-            let container = try decoder.singleValueContainer()
-            let value = try container.decode(Double.self)
-            // Decoded data comes from outside, so a value that does not fit is an error to report,
-            // not a reason to trap.
-            guard let fraction = Rational(approximating: value, significantDigits: Rational.defaultSignificantFloatingPointDigits) else {
-                throw DecodingError.dataCorruptedError(in: container, debugDescription: "\(value) does not fit in a fraction of \(Integer.self)")
-            }
-            numerator = fraction.numerator
-            denominator = fraction.denominator
+        } catch {
+            // Some decoders hand out a keyed container whatever the payload, and fail only on
+            // reading a field, so the payload may still be a plain number. If it is not, the field
+            // is at fault, and its error is the one to report: retrying as a number used to
+            // report "expected to decode Double but found a dictionary" for any bad field.
+            guard let number = try? Rational.decodePlainNumber(from: decoder) else { throw error }
+            self = number
+            return
         }
+        if numerator == Integer.min { throw FractionError.illegalNumerator }
+        if denominator == 0 || denominator == Integer.min { throw FractionError.illegalDenominator }
+    }
+
+    /// A payload that is a plain number, converted at the default precision.
+    static func decodePlainNumber(from decoder: Decoder) throws -> Rational {
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(Double.self)
+        // Decoded data comes from outside, so a value that does not fit is an error to report, not
+        // a reason to trap.
+        guard let fraction = Rational(approximating: value, significantDigits: Rational.defaultSignificantFloatingPointDigits) else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "\(value) does not fit in a fraction of \(Integer.self)")
+        }
+        return fraction
     }
 
     /// Encodes each field as a number when it fits in 64 bits, and as a decimal string when it

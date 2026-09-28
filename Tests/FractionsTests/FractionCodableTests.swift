@@ -129,4 +129,31 @@ class FractionCodableTests: XCTestCase {
         let large = try JSONDecoder().decode(Fraction.self, from: Data("1e15".utf8))
         XCTAssertEqual(large, Fraction(verifiedNumerator: 1_000_000_000_000_000), "1e15 should decode as 10^15/1")
     }
+
+    /// A bad field used to be retried as a plain number, and reported as that retry's failure,
+    /// "expected to decode Double but found a dictionary", whatever the field's fault was.
+    func testABadFieldReportsItsOwnError() {
+        for (payload, fault) in [(#"{"numerator":"one","denominator":2}"#, "is not an integer"),
+                                 (#"{"numerator":"170141183460469231731687303715884105727","denominator":2}"#, "is too wide for a Fraction")] {
+            XCTAssertThrowsError(try JSONDecoder().decode(Fraction.self, from: Data(payload.utf8))) { error in
+                guard case DecodingError.dataCorrupted(let context) = error else {
+                    return XCTFail("A numerator that \(fault) should be reported as corrupted data, got \(error)")
+                }
+                XCTAssertEqual(context.codingPath.map { $0.stringValue }, ["numerator"], "The error should name the field that \(fault)")
+            }
+        }
+
+        XCTAssertThrowsError(try JSONDecoder().decode(Fraction.self, from: Data(#"{"numerator":1}"#.utf8))) { error in
+            guard case DecodingError.keyNotFound(let key, _) = error else {
+                return XCTFail("A missing field should be reported as missing, got \(error)")
+            }
+            XCTAssertEqual(key.stringValue, "denominator", "The error should name the missing field")
+        }
+
+        XCTAssertThrowsError(try JSONDecoder().decode(Fraction.self, from: Data(#"{"numerator":1.5,"denominator":2}"#.utf8))) { error in
+            if case DecodingError.typeMismatch(let type, _) = error, type == Double.self {
+                XCTFail("A numerator of 1.5 should be reported as the decoder found it, not as a payload that is no Double")
+            }
+        }
+    }
 }
