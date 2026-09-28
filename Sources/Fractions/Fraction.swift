@@ -23,8 +23,6 @@
 //  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 //  THE SOFTWARE.
 
-import math_h
-
 /// A fraction whose numerator and denominator are `Int`s: the type most code uses.
 ///
 /// Everything a fraction can do is documented on ``Rational``, which this is a specialization of.
@@ -247,8 +245,10 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
         // inexact scale would turn even 0.5 into something not quite 1/2, and multiply any further
         // digits in as zeros. Only an `Integer` wider than 64 bits allows more than 22 digits.
         let exactDigits = Swift.min(significantDigits, 22)
-        // The fractional part is below 1 in magnitude, so its digits never exceed 10^n.
-        let digits = Integer(((float - Double(wholes)) * pow(10.0, Double(exactDigits))).rounded())
+        // The fractional part is below 1 in magnitude, so its digits never exceed 10^n. The power
+        // of ten converts from `Integer` exactly, which leaves no need for `pow`, nor for `math_h`,
+        // a module Linux does not have.
+        let digits = Integer(((float - Double(wholes)) * Double(Rational.powerOfTen(exactDigits)!)).rounded())
             * Rational.powerOfTen(significantDigits - exactDigits)!
 
         guard let result = Rational.sum(Rational(uncheckedNumerator: digits, denominator: scale),
