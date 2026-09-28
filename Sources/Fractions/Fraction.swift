@@ -427,11 +427,16 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
         Float(doubleValue)
     }
 
+    // Each operation taking a fraction is disfavored against its twin taking an integer, so that an
+    // integer literal picks the integer one. For a `Fraction` it would win anyway, as `Int` is a
+    // literal's default type, but for a `Fraction128` neither twin's type is, and without this
+    // `x.adding(1)` would not compile.
+
     /// Add another fraction to self.
     /// - Parameters:
     ///   - other: The fraction to add.
     ///   - reducing: A flag indicating whether to reduce the result of the addition to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public mutating func add(_ other: Rational, reducing: Bool = true) {
         guard let sum = Rational.sum(normalized(), other.normalized(), subtracting: false, reducing: reducing) else {
             Rational.trapOverflow(of: "\(self) + \(other)", reducing: reducing)
@@ -456,7 +461,7 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// - Parameters:
     ///   - other: The fraction to add.
     ///   - reducing: A flag indicating whether to reduce the result of the addition to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public func adding(_ other: Rational, reducing: Bool = true) -> Rational {
         var copy = self
         copy.add(other, reducing: reducing)
@@ -478,7 +483,7 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// - Parameters:
     ///   - other: The fraction to subtract.
     ///   - reducing: A flag indicating whether to reduce the result of the subtraction to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public mutating func subtract(_ other: Rational, reducing: Bool = true) {
         guard let difference = Rational.sum(self, other, subtracting: true, reducing: reducing) else {
             Rational.trapOverflow(of: "\(self) - \(other)", reducing: reducing)
@@ -503,7 +508,7 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// - Parameters:
     ///   - other: The fraction to subtract.
     ///   - reducing: A flag indicating whether to reduce the result of the subtraction to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public func subtracting(_ other: Rational, reducing: Bool = true) -> Rational {
         var copy = self
         copy.subtract(other, reducing: reducing)
@@ -525,7 +530,7 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// - Parameters:
     ///   - other: The fraction to multiply by.
     ///   - reducing: A flag indicating whether to reduce the result of the multiplication to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public mutating func multiply(by other: Rational, reducing: Bool = true) {
         guard let product = Rational.product(self, other, reducing: reducing) else {
             Rational.trapOverflow(of: "\(self) * \(other)", reducing: reducing)
@@ -550,7 +555,7 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// - Parameters:
     ///   - other: The fraction to multiply by.
     ///   - reducing: A flag indicating whether to reduce the result of the multiplication to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public func multiplying(by other: Rational, reducing: Bool = true) -> Rational {
         var copy = self
         copy.multiply(by: other, reducing:  reducing)
@@ -572,7 +577,7 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// - Parameters:
     ///   - other: The fraction to divide by.
     ///   - reducing: A flag indicating whether to reduce the result of the division to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public mutating func divide(by other: Rational, reducing: Bool = true) throws {
         guard other.numerator != 0 else { throw FractionError.illegalDivision }
 
@@ -594,7 +599,7 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// - Parameters:
     ///   - other: The fraction to divide by.
     ///   - reducing: A flag indicating whether to reduce the result of the division to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public mutating func nonZeroDivide(by other: Rational, reducing: Bool = true) {
         // Dividing is multiplying by the divisor with its fields swapped, which spells the result
         // `(a·d)/(b·c)`, as it always has been.
@@ -622,7 +627,7 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// - Parameters:
     ///   - other: The fraction to divide by.
     ///   - reducing: A flag indicating whether to reduce the result of the division to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public func dividing(by other: Rational, reducing: Bool = true) throws -> Rational {
         var copy = self
         try copy.divide(by: other, reducing: reducing)
@@ -646,7 +651,7 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// - Parameters:
     ///   - other: The fraction to divide by.
     ///   - reducing: A flag indicating whether to reduce the result of the division to its GCD. Defaults to `true`.
-    @inlinable
+    @inlinable @_disfavoredOverload
     public func nonZeroDividing(by other: Rational, reducing: Bool = true) -> Rational {
         var copy = self
         copy.nonZeroDivide(by: other, reducing: reducing)

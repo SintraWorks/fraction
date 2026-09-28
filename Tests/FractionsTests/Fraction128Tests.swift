@@ -113,6 +113,35 @@ class Fraction128Tests: XCTestCase {
         assertFields(base.power(of: -80), 1 << 80, threeToTheEightieth, "(3/2)^-80 should be 2^80/3^80")
     }
 
+    /// An integer literal is neither an `Int128` nor a `Fraction128` by default, so each named
+    /// operation's two overloads used to tie on one, and none of these compiled.
+    func testNamedOperationsTakeIntegerLiterals() throws {
+        guard #available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *) else { throw XCTSkip(Self.needsInt128) }
+
+        let half = Fraction128(verifiedNumerator: 1, verifiedDenominator: 2)
+        assertFields(half.adding(1), 3, 2, "1/2 + 1 should be 3/2")
+        assertFields(half.subtracting(1), -1, 2, "1/2 - 1 should be -1/2")
+        assertFields(half.multiplying(by: 3), 3, 2, "1/2 * 3 should be 3/2")
+        assertFields(try half.dividing(by: 2), 1, 4, "1/2 / 2 should be 1/4")
+        assertFields(half.nonZeroDividing(by: 2), 1, 4, "1/2 / 2 should be 1/4")
+
+        var sum = half
+        sum.add(1)
+        assertFields(sum, 3, 2, "1/2 + 1 should be 3/2")
+        var difference = half
+        difference.subtract(1, reducing: false)
+        assertFields(difference, -1, 2, "1/2 - 1 without reducing should be -1/2")
+        var product = half
+        product.multiply(by: 3)
+        assertFields(product, 3, 2, "1/2 * 3 should be 3/2")
+        var quotient = half
+        try quotient.divide(by: 2)
+        assertFields(quotient, 1, 4, "1/2 / 2 should be 1/4")
+        var nonZeroQuotient = half
+        nonZeroQuotient.nonZeroDivide(by: 2)
+        assertFields(nonZeroQuotient, 1, 4, "1/2 / 2 should be 1/4")
+    }
+
     func testFloatConversionBeyond64Bits() throws {
         guard #available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *) else { throw XCTSkip(Self.needsInt128) }
 
