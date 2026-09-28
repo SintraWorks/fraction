@@ -36,6 +36,9 @@ although the answer is `3/2^41`. Nothing that worked before returns anything dif
   `let x: Fraction = 1e15` crashed. It now traps only on a value whose result does not fit.
 - Decoding a `Fraction` from a plain number too large for one, or from NaN, crashed the process
   doing the decoding. It now throws `DecodingError.dataCorrupted`.
+- Decoding a keyed payload with a missing or malformed field reported "expected to decode Double
+  but found a dictionary": any failure was retried as a plain number, and the retry's failure
+  thrown. It now throws the error that decoding the field raised.
 - The library imported `math_h`, a module Apple's SDKs define but Swift's Linux module map does
   not, for a single call to `pow`, and so could not build on Linux. It now needs only the standard
   library.
@@ -88,11 +91,13 @@ although the answer is `3/2^41`. Nothing that worked before returns anything dif
 
 ### Upgrading
 
-Nothing is source-breaking. Three behaviours change, each of them a trap or a bug before:
+Nothing is source-breaking. Four behaviours change, each of them a trap or a bug before:
 
 - Arithmetic that trapped on an intermediate overflow now returns its result.
 - A result landing on `Int.min` traps in the operation that produces it, rather than in a later one.
 - `nonZeroDivide(by:reducing:)` with an `Int` and `reducing: false` no longer reduces.
+- Decoding a keyed payload with a bad field throws that field's error, rather than a `typeMismatch`
+  for `Double`.
 
 ## [1.2.0] - 2026-09-21
 

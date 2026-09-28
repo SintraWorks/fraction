@@ -841,24 +841,43 @@ extension Rational: ExpressibleByFloatLiteral {
 }
 
 extension Rational: Codable where Integer: Codable {
+    /// Decodes the fields as `encode(to:)` writes them, or a plain number, which converts as
+    /// `init(float:significantDigits:)` converts it at the default precision.
+    ///
+    /// A field that is missing or malformed throws the `DecodingError` decoding it raised, and a
+    /// numerator of `Integer.min`, or a denominator of 0 or `Integer.min`, throws a
+    /// `FractionError`. A plain number that does not fit throws `DecodingError.dataCorrupted`.
     public init(from decoder: Decoder) throws {
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else {
+            self = try Rational.decodePlainNumber(from: decoder)
+            return
+        }
         do {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
             numerator = try Rational.decodeField(.numerator, from: container)
             denominator = try Rational.decodeField(.denominator, from: container)
-            if numerator == Integer.min { throw FractionError.illegalNumerator }
-            if denominator == 0 || denominator == Integer.min { throw FractionError.illegalDenominator }
-        } catch let error where !(error is FractionError)  {
-            let container = try decoder.singleValueContainer()
-            let value = try container.decode(Double.self)
-            // Decoded data comes from outside, so a value that does not fit is an error to report,
-            // not a reason to trap.
-            guard let fraction = Rational(approximating: value, significantDigits: Rational.defaultSignificantFloatingPointDigits) else {
-                throw DecodingError.dataCorruptedError(in: container, debugDescription: "\(value) does not fit in a fraction of \(Integer.self)")
-            }
-            numerator = fraction.numerator
-            denominator = fraction.denominator
+        } catch {
+            // Some decoders hand out a keyed container whatever the payload, and fail only on
+            // reading a field, so the payload may still be a plain number. If it is not, the field
+            // is at fault, and its error is the one to report: retrying as a number used to
+            // report "expected to decode Double but found a dictionary" for any bad field.
+            guard let number = try? Rational.decodePlainNumber(from: decoder) else { throw error }
+            self = number
+            return
         }
+        if numerator == Integer.min { throw FractionError.illegalNumerator }
+        if denominator == 0 || denominator == Integer.min { throw FractionError.illegalDenominator }
+    }
+
+    /// A payload that is a plain number, converted at the default precision.
+    static func decodePlainNumber(from decoder: Decoder) throws -> Rational {
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(Double.self)
+        // Decoded data comes from outside, so a value that does not fit is an error to report, not
+        // a reason to trap.
+        guard let fraction = Rational(approximating: value, significantDigits: Rational.defaultSignificantFloatingPointDigits) else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "\(value) does not fit in a fraction of \(Integer.self)")
+        }
+        return fraction
     }
 
     /// Encodes each field as a number when it fits in 64 bits, and as a decimal string when it

@@ -252,7 +252,11 @@ class Fraction128Tests: XCTestCase {
         XCTAssertThrowsError(try JSONDecoder().decode(Fraction.self, from: Data(json.utf8)),
                              "A Fraction cannot hold these fields, and should say so rather than trap")
         XCTAssertThrowsError(try JSONDecoder().decode(Fraction128.self, from: Data(#"{"numerator":"one","denominator":"2"}"#.utf8)),
-                             "A string that is not an integer should be reported")
+                             "A string that is not an integer should be reported") { error in
+            guard case DecodingError.dataCorrupted = error else {
+                return XCTFail("A string that is not an integer should be reported as corrupted data, got \(error)")
+            }
+        }
     }
 
     /// `PropertyListEncoder` cannot encode an `Int128` itself, which is what the string form is for.
