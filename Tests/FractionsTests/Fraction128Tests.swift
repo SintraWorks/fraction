@@ -123,6 +123,53 @@ class Fraction128Tests: XCTestCase {
         XCTAssertNil(Fraction128(approximating: 1e39, significantDigits: 4), "1e39 does not fit in a Fraction128")
     }
 
+    /// Digits past the 22nd used to be zeros whatever the value, so a small value lost its
+    /// significant digits there, or vanished altogether.
+    func testSmallFloatsKeepTheirDigitsPastTheTwentySecond() throws {
+        guard #available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *) else { throw XCTSkip(Self.needsInt128) }
+
+        assertFields(Fraction128(float: 5e-25, significantDigits: 31), 1, 2_000_000_000_000_000_000_000_000,
+                     "5e-25 at 31 digits should be 1/(2·10^24), not 0")
+        assertFields(Fraction128(float: -1.2345e-20, significantDigits: 30), -2469, 200_000_000_000_000_000_000_000,
+                     "-1.2345e-20 at 30 digits should be -12345/10^24, not -123/10^22")
+        // A value whose digits end within the first 22 is unaffected.
+        assertFields(Fraction128(float: 0.1, significantDigits: 38), 1, 10, "0.1 at 38 digits should still be 1/10")
+    }
+
+    /// Every conversion, at every precision, lies within half a unit of its last digit of the
+    /// value converted, give or take the precision of the `Double` itself.
+    func testFloatConversionIsAccurateAtEveryPrecision() throws {
+        guard #available(macOS 15, iOS 18, watchOS 11, tvOS 18, visionOS 2, *) else { throw XCTSkip(Self.needsInt128) }
+
+        let seed: UInt64 = 0x5EED_0000_0000_0040
+        var generator = SplitMix64(seed: seed)
+        var mismatches = 0
+        var firstMismatch: String?
+
+        for _ in 0 ..< 20_000 {
+            let magnitude = pow(10.0, Double.random(in: -36 ... 38, using: &generator))
+            let value = Double.random(in: -magnitude ... magnitude, using: &generator)
+            let digits = Int.random(in: 0 ... Fraction128.maximumSignificantFloatingPointDigits, using: &generator)
+
+            // `init(float:)` would trap on a refusal, and take the test run down with it.
+            let converted = Fraction128(approximating: value, significantDigits: digits)
+            // Half a unit of the last digit, plus a few units of the Double's last place, for the
+            // scaling here and for `doubleValue`.
+            let tolerance = 0.5 * pow(10.0, -Double(digits)) + abs(value) * 1e-15
+            if converted.map({ abs($0.doubleValue - value) > tolerance }) ?? true {
+                mismatches += 1
+                if firstMismatch == nil {
+                    firstMismatch = "\(value) at \(digits) digits became \(converted.map { "\($0)" } ?? "nil")"
+                }
+            }
+        }
+
+        XCTAssertEqual(mismatches, 0, """
+            \(mismatches) of 20000 conversions strayed from their value (seed \(seed)). \
+            First: \(firstMismatch ?? "none")
+            """)
+    }
+
     // MARK: Conversions
 
     func testConversionsBetweenWidths() throws {

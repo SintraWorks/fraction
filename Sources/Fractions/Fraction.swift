@@ -215,6 +215,11 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
     /// `significantDigits` decimal places; anything longer is rounded. `0.5` converts to `1/2`,
     /// while at the default precision `0.123456789` converts to `247/2000`.
     ///
+    /// A `Double` carries only 15 to 17 significant digits, and digits asked for beyond those come
+    /// from its binary rounding rather than from the decimal it was written as. So at 38 digits a
+    /// ``Fraction128`` converts `0.1` to `1/10`, but `0.123456789` to a fraction a few parts in
+    /// 10^17 away from `123456789/10^9`.
+    ///
     /// - Note: The upper bound is the exponent of the largest power of ten that fits in `Integer`;
     ///   a higher value would overflow while computing the denominator.
     @inlinable
@@ -240,22 +245,38 @@ public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: S
         guard let scale = Rational.powerOfTen(significantDigits),
               let wholes = Integer(exactly: float.rounded(.towardZero))
         else { return nil }
-        // 10^22 is the largest power of ten a Double holds exactly, and already past the 17 or so
-        // digits a Double carries at all. So scale by at most that in floating point, where an
-        // inexact scale would turn even 0.5 into something not quite 1/2, and multiply any further
-        // digits in as zeros. Only an `Integer` wider than 64 bits allows more than 22 digits.
-        let exactDigits = Swift.min(significantDigits, 22)
-        // The fractional part is below 1 in magnitude, so its digits never exceed 10^n. The power
-        // of ten converts from `Integer` exactly, which leaves no need for `pow`, nor for `math_h`,
-        // a module Linux does not have.
-        let digits = Integer(((float - Double(wholes)) * Double(Rational.powerOfTen(exactDigits)!)).rounded())
-            * Rational.powerOfTen(significantDigits - exactDigits)!
+        let digits = Rational.fractionDigits(of: float - Double(wholes), count: significantDigits)
 
         guard let result = Rational.sum(Rational(uncheckedNumerator: digits, denominator: scale),
                                         Rational(uncheckedNumerator: wholes, denominator: 1),
                                         subtracting: false, reducing: true)
         else { return nil }
         self = result
+    }
+
+    /// The first `count` decimal digits of `fraction`, a value below 1 in magnitude, as an integer
+    /// rounded at the last of them: `0.375` to 2 digits is `38`. 10 to the power `count` must fit
+    /// in `Integer`, and the result is at most that.
+    ///
+    /// 10^22 is the largest power of ten a `Double` holds exactly, so the scaling in floating point
+    /// stops there: an inexact scale would turn even 0.5 into something not quite 1/2. Any further
+    /// digits come from what the scaled value holds below its units. For all but a tiny fraction,
+    /// the scaled value is a whole number, and they are zeros: the `Double` has no more to give.
+    /// For a tiny one, they are the rest of its significant digits, without which `5e-25` at 31
+    /// digits came out as 0. Only an `Integer` wider than 64 bits allows more than 22 digits.
+    @inlinable
+    static func fractionDigits(of fraction: Double, count: Int) -> Integer {
+        let exactCount = Swift.min(count, 22)
+        // The power of ten converts from `Integer` exactly, which leaves no need for `pow`, nor
+        // for `math_h`, a module Linux does not have.
+        let scaled = fraction * Double(powerOfTen(exactCount)!)
+        guard count > exactCount else { return Integer(scaled.rounded()) }
+
+        let remainingCount = count - exactCount
+        let whole = scaled.rounded(.towardZero)
+        let rest = ((scaled - whole) * Double(powerOfTen(remainingCount)!)).rounded()
+        // `whole` is below 10^22 and `rest` at most 10^remainingCount, so neither step overflows.
+        return Integer(whole) * powerOfTen(remainingCount)! + Integer(rest)
     }
 
     /// 10 to the power `exponent`, or `nil` if that is negative or overflows `Integer`.
