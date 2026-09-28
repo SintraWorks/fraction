@@ -46,9 +46,14 @@ public typealias Fraction128 = Rational<Int128>
 
 /// The errors a fraction's throwing initializers and operations raise, whatever its integer type.
 public enum FractionError: Error {
+    /// Decoding found a numerator of `Integer.min`, which no fraction may hold.
     case illegalNumerator
+    /// Decoding found a denominator of 0, or of `Integer.min`, which no fraction may hold.
     case illegalDenominator
+    /// A throwing division was asked to divide by zero.
     case illegalDivision
+    /// Never thrown: no release has raised it, and decoding reports malformed data as a
+    /// `DecodingError`. It remains so that code naming it still compiles.
     case decodingError
 }
 

@@ -10,7 +10,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 `Fraction128` holds numerators and denominators of up to 127 bits, for results that outgrow a
 `Fraction`. And arithmetic now traps only when its result does not fit: it used to trap as soon as
 an intermediate product overflowed `Int`, however small the answer, so `1/2^40 + 1/2^41` crashed,
-although the answer is `3/2^41`. Nothing that worked before returns anything different.
+although the answer is `3/2^41`. Nothing that worked before returns anything different, except two
+kinds of result that were wrong, listed under Upgrading.
 
 ### Fixed
 
@@ -18,7 +19,8 @@ although the answer is `3/2^41`. Nothing that worked before returns anything dif
   when an intermediate value overflows `Int` but the result fits. Each operation still runs as
   before; only if that overflows does it work the result out exactly, cancelling common factors
   first (Knuth, TAOCP vol. 2, §4.5.1) and carrying the one sum that can outgrow `Int` across two
-  words. Every result that did not trap before is unchanged, sign placement included.
+  words. Every result that did not trap before is unchanged, sign placement included, except one
+  that lands on `Int.min`, below.
 - A result that lands on `Int.min`, which is outside the range, now traps in the operation that
   produces it. It used to be returned, only to trap in whatever touched it next:
   `Fraction(verifiedNumerator: -(1 << 62), verifiedDenominator: -1) - Fraction(verifiedNumerator: 1 << 62, verifiedDenominator: -1)`
@@ -53,21 +55,22 @@ although the answer is `3/2^41`. Nothing that worked before returns anything dif
   numerator and denominator. Code written against `Fraction` compiles unchanged. What can tell the
   difference: `String(describing: Fraction.self)` reads `Rational<Int>`; `FractionError` is a
   top-level type, still reachable as `Fraction.FractionError`; and
-  `defaultSignificantFloatingPointDigits` and `maximumSignificantFloatingPointDigits` are computed
-  rather than stored, as a generic type cannot store a static property.
+  `defaultSignificantFloatingPointDigits` is computed rather than stored, as a generic type cannot
+  store a static property.
 - The hot paths are `@inlinable`, so a dependent compiles them specialized for its own types.
   Without that, generic code called from another module runs unspecialized, which in a prototype
-  made `reduce()` 16 times slower. In the benchmark every operation costs what it did, to within 3%,
-  except the exact path, which is 5% slower; and subtraction, multiplication, division and adding an
-  integer are 6 to 9% faster.
+  made `reduce()` 16 times slower. In the benchmark, built for release, every operation costs what
+  it did in 1.2.0, to within 5%, and adding an integer is 10% faster. A debug build specializes
+  nothing, though, so there a dependent's arithmetic runs 6 to 7 times slower than 1.2.0's,
+  reducing, hashing and inserting into a `Set` 4 to 5 times, and comparing and sorting about twice.
 
 ### Added
 
 - `Fraction128`, a fraction whose numerator and denominator are `Int128`s: up to 127 bits each,
   where a `Fraction`'s hold 63, and otherwise the same API. It needs `Int128`, so macOS 15, iOS 18,
   watchOS 11, tvOS 18 or visionOS 2, or any Linux. On everyday values it costs 1.2 to 1.4 times what
-  a `Fraction` does, and comparing twice as much; results well past 64 bits cost about six times as
-  much as everyday `Fraction` arithmetic, as 128-bit division runs in software.
+  a `Fraction` does, and comparing twice as much; results well past 64 bits cost six to seven times
+  as much as everyday `Fraction` arithmetic, as 128-bit division runs in software.
 - `init(_:)` and `init?(exactly:)`, converting between `Fraction` and `Fraction128`, or any two
   widths of `Rational`: with the fields as written when they fit, and otherwise in lowest terms.
   `init(_:)` traps where `init?(exactly:)` returns `nil`.
@@ -81,10 +84,9 @@ although the answer is `3/2^41`. Nothing that worked before returns anything dif
   `defaultSignificantFloatingPointDigits`, stays 4 wherever 10^4 fits, and is this bound where it
   does not, as for a `Rational<Int8>`.
 - Arithmetic in the `FractionsBenchmarks` target: `+`, `+ Int`, `-`, `*` and `/` on the benchmark
-  corpus, and `+` on a corpus whose every sum takes the exact path. Arithmetic that does not
-  overflow costs what it did before, to within 2%. The exact path costs about 2.4 times as much,
-  and runs only where arithmetic used to trap. The same measurements for `Fraction128`, and on
-  fields of about 60 bits, whose products run past 120.
+  corpus, and `+` on a corpus whose every sum takes the exact path. The exact path costs about 2.4
+  times as much as a sum that does not overflow, and runs only where arithmetic used to trap. The
+  same measurements for `Fraction128`, and on fields of about 60 bits, whose products run past 120.
 - Property-based tests checking every arithmetic operation, with and without reducing, against the
   1.2.0 formulas evaluated exactly in `Int128`, at 8, 16, 32 and 64 bits: 40,000 seeded pairs per
   operation for `Fraction`, and 10,000 at each narrower width, where nearly every operation meets an
