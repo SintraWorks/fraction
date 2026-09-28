@@ -9,19 +9,19 @@ The Fraction type supports **addition**, **subtraction**, **multiplication** and
 
 Comparison is by value, not by spelling: a fraction remembers how it was written, so `Fraction(numerator: 2, denominator: 4)` stores `2/4`, but it compares equal to `1/2` and hashes alike, which makes either usable as the same `Dictionary` key or `Set` member.
 
-    Per example, you can add two fractions in any of the following ways:
+For example, you can add two fractions in any of the following ways:
 
-        var f1 = Fraction(numerator: 1, denominator: 2)
-        let f2 = Fraction(numerator: 3, denominator: 4)
+    var f1 = Fraction(verifiedNumerator: 1, verifiedDenominator: 2)
+    let f2 = Fraction(verifiedNumerator: 3, verifiedDenominator: 4)
 
-        f1.add(f2) // mutating, f1 now holds the result of the addition
-        let result1 = f1.adding(f2) // non-mutating
-        let result2 = f1 + f2 // non-mutating
-        f1 += f2 // mutating, f1 now holds the result of the addition
+    f1.add(f2) // mutating, f1 now holds the result of the addition
+    let result1 = f1.adding(f2) // non-mutating
+    let result2 = f1 + f2 // non-mutating
+    f1 += f2 // mutating, f1 now holds the result of the addition
 
 By default arithmetic operations will reduce the result to its **Greatest Common Denominator**. The function based variants allow turning off this behaviour by explicitly forbidding reduction:
 
-        f1.add(f2, reducing: false)
+    f1.add(f2, reducing: false)
 
 Arithmetic on a Fraction traps only when its result does not fit: when the result's numerator or denominator falls outside `Int.min + 1 ... Int.max`. Results are in lowest terms unless you pass `reducing: false`, and then it is the unreduced result that has to fit. Intermediate values never cause a trap: `1/2^40 + 1/2^41` is `3/2^41`, although the product of the two denominators is far beyond `Int`. Comparing and hashing fractions never trap either: they carry their products at full width.
 
@@ -61,7 +61,7 @@ let package = Package(
   dependencies: [
     .package(
       url: "https://github.com/sintraworks/fraction.git",
-      .upToNextMinor(from: "1.2.0") // or .upToNextMajor
+      .upToNextMinor(from: "1.3.0") // or .upToNextMajor
     )
   ],
   targets: [

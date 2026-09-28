@@ -5,7 +5,7 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.0] - 2026-09-28
 
 `Fraction128` holds numerators and denominators of up to 127 bits, for results that outgrow a
 `Fraction`. And arithmetic now traps only when its result does not fit: it used to trap as soon as
@@ -210,7 +210,7 @@ reduced to their greatest common denominator by default and `reducing: false` to
 It conforms to `Comparable`, `Codable`, `ExpressibleByIntegerLiteral` and
 `ExpressibleByFloatLiteral`, converts to and from floating-point values, and traps on overflow.
 
-[Unreleased]: https://github.com/SintraWorks/fraction/compare/1.2.0...HEAD
+[1.3.0]: https://github.com/SintraWorks/fraction/compare/1.2.0...1.3.0
 [1.2.0]: https://github.com/SintraWorks/fraction/compare/1.1.0...1.2.0
 [1.1.0]: https://github.com/SintraWorks/fraction/compare/1.0.1...1.1.0
 [1.0.1]: https://github.com/SintraWorks/fraction/compare/1.0.0...1.0.1
