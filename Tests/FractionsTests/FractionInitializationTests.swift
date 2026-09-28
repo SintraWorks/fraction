@@ -198,6 +198,22 @@ class FractionInitializationTests: XCTestCase {
         XCTAssertEqual(finest, Fraction(verifiedNumerator: 1, verifiedDenominator: 2), "0.5 at the finest precision should be 1/2")
     }
 
+    /// The default of 4 digits needs 10^4, which an `Int8` cannot hold, so every float literal of
+    /// a `Rational<Int8>` trapped, and decoding a plain number into one always failed.
+    func testDefaultSignificantDigitsFitEveryWidth() throws {
+        XCTAssertEqual(Fraction.defaultSignificantFloatingPointDigits, 4)
+        XCTAssertEqual(Rational<Int32>.defaultSignificantFloatingPointDigits, 4)
+        XCTAssertEqual(Rational<Int16>.defaultSignificantFloatingPointDigits, 4, "10^4 fits in an Int16")
+        XCTAssertEqual(Rational<Int8>.defaultSignificantFloatingPointDigits, 2, "10^2 is the largest power of ten an Int8 holds")
+
+        let literal: Rational<Int8> = 1.5
+        XCTAssertEqual(literal.numerator, 3, "The literal 1.5 should be 3/2")
+        XCTAssertEqual(literal.denominator, 2, "The literal 1.5 should be 3/2")
+
+        let decoded = try JSONDecoder().decode(Rational<Int8>.self, from: Data("1.5".utf8))
+        XCTAssertEqual(decoded, literal, "A plain 1.5 should decode as 3/2")
+    }
+
     /// The whole part used to be folded into the numerator as `wholes · 10^n` before reducing,
     /// which overflowed for values as small as 1e15 at the default four digits, although the
     /// result fits.

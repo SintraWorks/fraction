@@ -99,13 +99,20 @@ public enum FractionError: Error {
  */
 public struct Rational<Integer: FixedWidthInteger & SignedInteger & Sendable>: Sendable {
     /// The number of fraction digits considered when creating a fraction from a floating point
-    /// value, unless a call supplies its own.
+    /// value, unless a call supplies its own: 4, or where `Integer` cannot hold 10^4, as an `Int8`
+    /// cannot, `maximumSignificantFloatingPointDigits`.
     ///
     /// Pass `significantDigits` to `init(float:significantDigits:)` to convert at a different
     /// precision. That is a per-call choice rather than a process-wide setting, so it is safe to
     /// use from any concurrency domain and cannot change the meaning of a conversion elsewhere.
     @inlinable
-    public static var defaultSignificantFloatingPointDigits: Int { 4 }
+    public static var defaultSignificantFloatingPointDigits: Int {
+        // 10^4 lies between 2^13 and 2^14, so a signed type of 15 bits or more holds it. The width
+        // is a constant, so this folds away, and with it the loops a computed precision would
+        // leave in every conversion: comparing against `maximumSignificantFloatingPointDigits`
+        // instead cost a `Fraction`'s float conversion 4%.
+        Integer.bitWidth >= 15 ? 4 : maximumSignificantFloatingPointDigits
+    }
 
     /// The most fraction digits `init(float:significantDigits:)` can preserve: for a `Fraction`,
     /// 18 where `Int` is 64 bits wide, and 9 where it is 32, as on arm64_32 watchOS.

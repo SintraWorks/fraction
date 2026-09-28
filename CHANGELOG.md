@@ -77,7 +77,9 @@ although the answer is `3/2^41`. Nothing that worked before returns anything dif
   values fit. The strings are what let property lists carry any `Fraction128`:
   `PropertyListEncoder` cannot encode an `Int128` itself.
 - `maximumSignificantFloatingPointDigits`, the upper bound of `significantDigits`: 18 where `Int` is
-  64 bits wide, 9 where it is 32, and 38 for a `Fraction128`.
+  64 bits wide, 9 where it is 32, and 38 for a `Fraction128`. The default,
+  `defaultSignificantFloatingPointDigits`, stays 4 wherever 10^4 fits, and is this bound where it
+  does not, as for a `Rational<Int8>`.
 - Arithmetic in the `FractionsBenchmarks` target: `+`, `+ Int`, `-`, `*` and `/` on the benchmark
   corpus, and `+` on a corpus whose every sum takes the exact path. Arithmetic that does not
   overflow costs what it did before, to within 2%. The exact path costs about 2.4 times as much,
